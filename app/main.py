@@ -1,0 +1,199 @@
+"""javi-forecast: APM Forecasting Service.
+
+FastAPI application with lifespan management.
+
+Startup sequence
+----------------
+1. Initialise ClickHouse client and verify connectivity.
+2. Backfill the FeatureStore from ClickHouse history (if enabled).
+3. Start the Kafka consumer (if enabled).
+4. Start the background Forecaster loop.
+5. Mark service as ready.
+
+Shutdown sequence
+-----------------
+1. Stop Forecaster.
+2. Stop Kafka consumer.
+3. Flush open feature-store buckets.
+4. Close ClickHouse connection.
+"""
+
+from __future__ import annotations
+
+import logging
+import sys
+from contextlib import asynccontextmanager
+from typing import AsyncIterator
+
+import uvicorn
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
+from .api.router import api_router
+from .api.health import set_dependencies, mark_ready
+from .anomaly.predictor import AnomalyPredictor
+from .alerter.webhook import WebhookAlerter
+from .config import settings
+from .consumer.event_handler import EventHandler
+from .consumer.kafka_consumer import KafkaConsumerService
+from .engine.feature_store import FeatureStore
+from .engine.forecaster import Forecaster
+from .store.clickhouse import ClickHouseStore
+from .store.forecast_store import ForecastStore
+
+# ---------------------------------------------------------------------------
+# Logging configuration
+# ---------------------------------------------------------------------------
+
+logging.basicConfig(
+    stream=sys.stdout,
+    level=getattr(logging, settings.LOG_LEVEL.upper(), logging.INFO),
+    format="%(asctime)s %(levelname)s %(name)s %(message)s",
+)
+logger = logging.getLogger("javi_forecast")
+
+
+# ---------------------------------------------------------------------------
+# Application lifespan
+# ---------------------------------------------------------------------------
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    """Manage startup and shutdown of background services."""
+    logger.info("javi-forecast starting up …")
+
+    # ---- Build shared components ----------------------------------------
+    feature_store = FeatureStore(maxlen=4320)          # 72 h at 1-min cadence
+    forecast_store = ForecastStore(ttl_seconds=3600)
+    event_handler = EventHandler(feature_store)
+    anomaly_predictor = AnomalyPredictor(
+        warn_z=settings.ALERT_FORECAST_THRESHOLD,
+        critical_z=settings.ALERT_FORECAST_THRESHOLD + 1.0,
+    )
+    alerter = WebhookAlerter(cooldown_seconds=300)
+    forecaster = Forecaster(
+        feature_store=feature_store,
+        forecast_store=forecast_store,
+        anomaly_predictor=anomaly_predictor,
+        alerter=alerter,
+    )
+
+    # Expose shared state via app.state for dependency injection
+    app.state.feature_store = feature_store
+    app.state.forecast_store = forecast_store
+    app.state.event_handler = event_handler
+    app.state.forecaster = forecaster
+
+    # ---- ClickHouse ---------------------------------------------------------
+    clickhouse: ClickHouseStore | None = None
+    if not settings.DISABLE_CLICKHOUSE:
+        clickhouse = ClickHouseStore()
+        try:
+            await clickhouse.connect()
+            ok = await clickhouse.ping()
+            if not ok:
+                logger.warning("ClickHouse ping failed – continuing without it")
+                clickhouse = None
+            else:
+                logger.info("ClickHouse connection established")
+        except Exception as exc:
+            logger.error("ClickHouse connection error: %s – continuing without it", exc)
+            clickhouse = None
+    else:
+        logger.info("ClickHouse disabled (DISABLE_CLICKHOUSE=true)")
+
+    app.state.clickhouse = clickhouse
+
+    # ---- Backfill -----------------------------------------------------------
+    if clickhouse is not None and settings.BACKFILL_ENABLED:
+        try:
+            logger.info("Starting ClickHouse backfill …")
+            await clickhouse.backfill_feature_store(feature_store)
+        except Exception as exc:
+            logger.error("Backfill failed: %s", exc)
+
+    # ---- Alerter ------------------------------------------------------------
+    await alerter.start()
+
+    # ---- Kafka consumer -----------------------------------------------------
+    kafka: KafkaConsumerService | None = None
+    if settings.KAFKA_ENABLED:
+        kafka = KafkaConsumerService(event_handler)
+        try:
+            await kafka.start()
+        except Exception as exc:
+            logger.error("Kafka consumer failed to start: %s", exc)
+            kafka = None
+    else:
+        logger.info("Kafka consumer disabled (KAFKA_ENABLED=false)")
+
+    app.state.kafka = kafka
+
+    # ---- Forecaster ---------------------------------------------------------
+    await forecaster.start()
+
+    # ---- Mark ready ---------------------------------------------------------
+    set_dependencies(clickhouse, feature_store, ready=True)
+    mark_ready(True)
+    logger.info("javi-forecast ready on port %d", settings.HTTP_PORT)
+
+    # ---- Yield (server is running) -----------------------------------------
+    yield
+
+    # ---- Shutdown -----------------------------------------------------------
+    logger.info("javi-forecast shutting down …")
+    mark_ready(False)
+
+    await forecaster.stop()
+
+    if kafka is not None:
+        await kafka.stop()
+
+    await feature_store.flush_open_buckets()
+    await alerter.stop()
+
+    if clickhouse is not None:
+        await clickhouse.close()
+
+    logger.info("javi-forecast shutdown complete")
+
+
+# ---------------------------------------------------------------------------
+# FastAPI application
+# ---------------------------------------------------------------------------
+
+app = FastAPI(
+    title="javi-forecast",
+    description=(
+        "APM Forecasting Service – consumes OTel spans from javi-collector, "
+        "maintains a RED metrics feature store, and produces time-series "
+        "forecasts with anomaly detection."
+    ),
+    version="0.1.0",
+    lifespan=lifespan,
+    docs_url="/docs",
+    redoc_url="/redoc",
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+app.include_router(api_router)
+
+
+# ---------------------------------------------------------------------------
+# Entrypoint
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    uvicorn.run(
+        "app.main:app",
+        host="0.0.0.0",
+        port=settings.HTTP_PORT,
+        log_level=settings.LOG_LEVEL.lower(),
+        access_log=True,
+    )

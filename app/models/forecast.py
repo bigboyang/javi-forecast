@@ -1,0 +1,47 @@
+from pydantic import BaseModel
+from typing import List, Optional
+from datetime import datetime
+from enum import Enum
+
+
+class ModelType(str, Enum):
+    EWMA = "ewma"
+    ARIMA = "arima"
+    HOLTWINTERS = "holtwinters"
+    AUTO = "auto"
+
+
+class PredictionPoint(BaseModel):
+    timestamp: datetime
+    predicted: float
+    lower_bound: float
+    upper_bound: float
+    confidence: float    # 0.0 - 1.0
+
+
+class ForecastResult(BaseModel):
+    service_name: str
+    metric_name: str
+    model_used: ModelType
+    generated_at: datetime
+    horizon_minutes: int
+    predictions: List[PredictionPoint]
+    mse: Optional[float] = None
+    is_anomaly_predicted: bool = False
+    anomaly_severity: Optional[str] = None   # warn | critical
+
+
+class ForecastRequest(BaseModel):
+    service_name: str
+    metric_name: str = "p95_ms"
+    horizon_minutes: int = 30
+    model: ModelType = ModelType.AUTO
+
+
+class CapacityForecast(BaseModel):
+    service_name: str
+    current_rate: float
+    predicted_peak_rate: float
+    predicted_peak_time: datetime
+    saturation_risk: str   # low | medium | high | critical
+    recommendation: str

@@ -1,0 +1,139 @@
+version: "3.9"
+
+# ---------------------------------------------------------------------------
+# javi-forecast local dev stack
+#
+# Reuses ClickHouse & Kafka from javi-collector stack when running together.
+# Run standalone:
+#   docker compose up
+#
+# Connect to existing javi-collector stack (external network):
+#   docker compose -f docker-compose.yml -f docker-compose.external.yml up
+# ---------------------------------------------------------------------------
+
+services:
+  # ── javi-forecast ─────────────────────────────────────────────────────────
+  javi-forecast:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: javi-forecast:dev
+    container_name: javi-forecast
+    ports:
+      - "8080:8080"
+    environment:
+      HTTP_PORT: "8080"
+      LOG_LEVEL: "debug"
+
+      # ClickHouse – uses local standalone instance below
+      CLICKHOUSE_HOST: "clickhouse"
+      CLICKHOUSE_PORT: "9000"
+      CLICKHOUSE_DB: "apm"
+      CLICKHOUSE_USER: "default"
+      CLICKHOUSE_PASSWORD: ""
+      DISABLE_CLICKHOUSE: "false"
+
+      # Kafka – uses local standalone broker below
+      KAFKA_ENABLED: "true"
+      KAFKA_BROKERS: "kafka:9092"
+      KAFKA_TOPIC: "spans.error"
+      KAFKA_GROUP_ID: "javi-forecast"
+
+      # Forecasting
+      FORECAST_HORIZON_MINUTES: "30"
+      FORECAST_INTERVAL_SECONDS: "60"
+      FEATURE_WINDOW_MINUTES: "60"
+      MIN_DATA_POINTS: "10"
+      DEFAULT_MODEL: "auto"
+
+      # Backfill history from ClickHouse on startup
+      BACKFILL_ENABLED: "true"
+      BACKFILL_HOURS: "24"
+
+      # Alerting (optional)
+      # ALERT_WEBHOOK_URL: "http://your-alertmanager/webhook"
+      # ALERT_SLACK_WEBHOOK_URL: "https://hooks.slack.com/services/..."
+      ALERT_FORECAST_THRESHOLD: "2.0"
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - apm
+
+  # ── ClickHouse (standalone for local dev) ─────────────────────────────────
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.3-alpine
+    container_name: clickhouse
+    ports:
+      - "9000:9000"
+      - "8123:8123"
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+    environment:
+      CLICKHOUSE_DB: apm
+      CLICKHOUSE_USER: default
+      CLICKHOUSE_PASSWORD: ""
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    healthcheck:
+      test: ["CMD", "clickhouse-client", "--query", "SELECT 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+    networks:
+      - apm
+
+  # ── Zookeeper ──────────────────────────────────────────────────────────────
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.7.0
+    container_name: zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    healthcheck:
+      test: ["CMD", "bash", "-c", "echo ruok | nc localhost 2181"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - apm
+
+  # ── Kafka ──────────────────────────────────────────────────────────────────
+  kafka:
+    image: confluentinc/cp-kafka:7.7.0
+    container_name: kafka
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: "zookeeper:2181"
+      KAFKA_ADVERTISED_LISTENERS: "PLAINTEXT://kafka:9092"
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "kafka-topics", "--bootstrap-server", "localhost:9092", "--list"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+    networks:
+      - apm
+
+volumes:
+  clickhouse_data:
+
+networks:
+  apm:
+    name: apm
+    driver: bridge
