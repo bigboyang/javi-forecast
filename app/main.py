@@ -39,6 +39,7 @@ from .consumer.kafka_consumer import KafkaConsumerService
 from .consumer.metric_event_handler import MetricEventHandler
 from .engine.feature_store import FeatureStore
 from .engine.forecaster import Forecaster
+from .engine.jvm_analyzer import JvmAnalyzer
 from .engine.jvm_feature_store import JvmFeatureStore
 from .engine.metric_feature_store import MetricFeatureStore
 from .store.clickhouse import ClickHouseStore
@@ -79,11 +80,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         critical_z=settings.ALERT_FORECAST_THRESHOLD + 1.0,
     )
     alerter = WebhookAlerter(cooldown_seconds=300)
+    jvm_analyzer = JvmAnalyzer(
+        jvm_store=jvm_feature_store,
+        alerter=alerter,
+    )
     forecaster = Forecaster(
         feature_store=feature_store,
         forecast_store=forecast_store,
         anomaly_predictor=anomaly_predictor,
         alerter=alerter,
+        metric_feature_store=metric_feature_store,
     )
 
     # Expose shared state via app.state for dependency injection
@@ -94,6 +100,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.event_handler = event_handler
     app.state.metric_event_handler = metric_event_handler
     app.state.forecaster = forecaster
+    app.state.jvm_analyzer = jvm_analyzer
 
     # ---- ClickHouse ---------------------------------------------------------
     clickhouse: ClickHouseStore | None = None
@@ -143,6 +150,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     app.state.kafka = kafka
 
+    # ---- JVM Analyzer -------------------------------------------------------
+    await jvm_analyzer.start()
+
     # ---- Forecaster ---------------------------------------------------------
     await forecaster.start()
 
@@ -159,6 +169,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     mark_ready(False)
 
     await forecaster.stop()
+    await jvm_analyzer.stop()
 
     if kafka is not None:
         await kafka.stop()

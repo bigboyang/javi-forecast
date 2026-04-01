@@ -21,6 +21,7 @@ from ..models.forecast import ForecastResult, ModelType, PredictionPoint
 from ..anomaly.predictor import AnomalyPredictor
 from ..alerter.webhook import WebhookAlerter
 from .feature_store import FeatureStore
+from .metric_feature_store import MetricFeatureStore
 from .selector import select_model
 from ..store.forecast_store import ForecastStore
 
@@ -95,6 +96,7 @@ class Forecaster:
         forecast_store: ForecastStore,
         anomaly_predictor: AnomalyPredictor,
         alerter: WebhookAlerter,
+        metric_feature_store: Optional[MetricFeatureStore] = None,
         interval_seconds: int = settings.FORECAST_INTERVAL_SECONDS,
         horizon_minutes: int = settings.FORECAST_HORIZON_MINUTES,
         window_minutes: int = settings.FEATURE_WINDOW_MINUTES,
@@ -102,6 +104,7 @@ class Forecaster:
         default_model: str = settings.DEFAULT_MODEL,
     ) -> None:
         self._feature_store = feature_store
+        self._metric_feature_store = metric_feature_store
         self._forecast_store = forecast_store
         self._predictor = anomaly_predictor
         self._alerter = alerter
@@ -184,8 +187,132 @@ class Forecaster:
                     self._feature_store.size(service)
                 )
 
+        # Forecast custom OTel metrics from MetricFeatureStore
+        if self._metric_feature_store is not None:
+            await self._run_custom_metric_cycle()
+
         # Evict stale forecasts
         await self._forecast_store.evict_expired()
+
+    async def _run_custom_metric_cycle(self) -> None:
+        """Forecast all (service, metric) pairs in MetricFeatureStore."""
+        store = self._metric_feature_store
+        services = store.get_services()
+        if not services:
+            return
+
+        tasks = []
+        for service in services:
+            for metric_name in store.get_metric_names(service):
+                points = store.get_series(
+                    service, metric_name, window_minutes=self.window_minutes
+                )
+                if len(points) >= self.min_data_points:
+                    tasks.append(
+                        self._forecast_custom_metric(service, metric_name, points)
+                    )
+
+        if not tasks:
+            return
+
+        sem = asyncio.Semaphore(8)
+
+        async def _bounded(coro):
+            async with sem:
+                return await coro
+
+        await asyncio.gather(*[_bounded(t) for t in tasks], return_exceptions=True)
+
+    async def _forecast_custom_metric(
+        self, service: str, metric_name: str, points
+    ) -> None:
+        """Compute and store a forecast for one custom OTel metric."""
+        values = np.array([p.value for p in points], dtype=float)
+        timestamps = [p.timestamp for p in points]
+
+        loop = asyncio.get_event_loop()
+        try:
+            model, mse = await loop.run_in_executor(
+                None, lambda: select_model(values, self.default_model)
+            )
+        except Exception as exc:
+            logger.error(
+                "Custom metric model fit failed service=%s metric=%s: %s",
+                service, metric_name, exc,
+            )
+            return
+
+        last_ts = timestamps[-1]
+        if last_ts.tzinfo is None:
+            last_ts = last_ts.replace(tzinfo=timezone.utc)
+
+        steps = self.horizon_minutes
+        future_ts = [last_ts + timedelta(minutes=i + 1) for i in range(steps)]
+
+        try:
+            predicted, lower, upper = model.predict(steps)
+        except Exception as exc:
+            logger.error(
+                "Custom metric prediction failed service=%s metric=%s: %s",
+                service, metric_name, exc,
+            )
+            return
+
+        confidences = np.exp(-np.arange(steps) / steps)
+        prediction_points: List[PredictionPoint] = [
+            PredictionPoint(
+                timestamp=future_ts[i],
+                predicted=float(predicted[i]),
+                lower_bound=float(lower[i]),
+                upper_bound=float(upper[i]),
+                confidence=float(confidences[i]),
+            )
+            for i in range(steps)
+        ]
+
+        model_cls = type(model).__name__.lower()
+        if "ewma" in model_cls:
+            model_type = ModelType.EWMA
+        elif "arima" in model_cls:
+            model_type = ModelType.ARIMA
+        elif "holtwinters" in model_cls:
+            model_type = ModelType.HOLTWINTERS
+        else:
+            model_type = ModelType.EWMA
+
+        anomaly = self._predictor.analyse(
+            ForecastResult(
+                service_name=service,
+                metric_name=metric_name,
+                model_used=model_type,
+                generated_at=datetime.now(tz=timezone.utc),
+                horizon_minutes=self.horizon_minutes,
+                predictions=prediction_points,
+                mse=float(mse) if mse != float("inf") else None,
+            ),
+            values,
+        )
+
+        result = ForecastResult(
+            service_name=service,
+            metric_name=metric_name,
+            model_used=model_type,
+            generated_at=datetime.now(tz=timezone.utc),
+            horizon_minutes=self.horizon_minutes,
+            predictions=prediction_points,
+            mse=float(mse) if mse != float("inf") else None,
+            is_anomaly_predicted=anomaly is not None,
+            anomaly_severity=anomaly.severity if anomaly else None,
+        )
+        await self._forecast_store.set(result)
+
+        if anomaly:
+            await self._alerter.fire(anomaly)
+
+        logger.debug(
+            "Custom metric forecast stored service=%s metric=%s model=%s anomaly=%s",
+            service, metric_name, model_type.value, anomaly is not None,
+        )
 
     async def _forecast_service_metric(
         self, service: str, metric: str
