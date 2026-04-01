@@ -36,14 +36,19 @@ from .alerter.webhook import WebhookAlerter
 from .config import settings
 from .consumer.event_handler import EventHandler
 from .consumer.kafka_consumer import KafkaConsumerService
+from .consumer.metric_event_handler import MetricEventHandler
 from .engine.feature_store import FeatureStore
 from .engine.forecaster import Forecaster
+from .engine.jvm_feature_store import JvmFeatureStore
+from .engine.metric_feature_store import MetricFeatureStore
 from .store.clickhouse import ClickHouseStore
 from .store.forecast_store import ForecastStore
 
 # ---------------------------------------------------------------------------
 # Logging configuration
 # ---------------------------------------------------------------------------
+
+# kafka 구독 추가, 메시지 처리 로직 추가
 
 logging.basicConfig(
     stream=sys.stdout,
@@ -63,9 +68,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     logger.info("javi-forecast starting up …")
 
     # ---- Build shared components ----------------------------------------
-    feature_store = FeatureStore(maxlen=4320)          # 72 h at 1-min cadence
+    feature_store = FeatureStore(maxlen=4320)              # 72 h at 1-min cadence
+    jvm_feature_store = JvmFeatureStore(maxlen=4320)       # 72 h at 1-min cadence
+    metric_feature_store = MetricFeatureStore(maxlen=4320) # 72 h at 1-min cadence
     forecast_store = ForecastStore(ttl_seconds=3600)
     event_handler = EventHandler(feature_store)
+    metric_event_handler = MetricEventHandler(metric_feature_store)
     anomaly_predictor = AnomalyPredictor(
         warn_z=settings.ALERT_FORECAST_THRESHOLD,
         critical_z=settings.ALERT_FORECAST_THRESHOLD + 1.0,
@@ -80,8 +88,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     # Expose shared state via app.state for dependency injection
     app.state.feature_store = feature_store
+    app.state.jvm_feature_store = jvm_feature_store
+    app.state.metric_feature_store = metric_feature_store
     app.state.forecast_store = forecast_store
     app.state.event_handler = event_handler
+    app.state.metric_event_handler = metric_event_handler
     app.state.forecaster = forecaster
 
     # ---- ClickHouse ---------------------------------------------------------
@@ -115,10 +126,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # ---- Alerter ------------------------------------------------------------
     await alerter.start()
 
-    # ---- Kafka consumer -----------------------------------------------------
+    # ---- Kafka consumer (span + metric) ------------------------------------
     kafka: KafkaConsumerService | None = None
     if settings.KAFKA_ENABLED:
-        kafka = KafkaConsumerService(event_handler)
+        kafka = KafkaConsumerService(
+            event_handler=event_handler,
+            metric_handler=metric_event_handler,
+        )
         try:
             await kafka.start()
         except Exception as exc:

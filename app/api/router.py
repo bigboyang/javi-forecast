@@ -6,6 +6,7 @@ from .health import router as health_router
 from .ingest import router as ingest_router
 from .forecast import router as forecast_router
 from .prometheus import router as prometheus_router
+from .jvm import router as jvm_router
 
 api_router = APIRouter()
 
@@ -13,3 +14,4 @@ api_router.include_router(health_router)
 api_router.include_router(ingest_router)
 api_router.include_router(forecast_router)
 api_router.include_router(prometheus_router)
+api_router.include_router(jvm_router)

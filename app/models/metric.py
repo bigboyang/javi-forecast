@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import List
+from typing import Any, Dict, List, Optional
 from datetime import datetime
 
 
@@ -22,3 +22,27 @@ class TimeSeriesData(BaseModel):
     service_name: str
     metric_name: str      # rate | error_rate | p50_ms | p95_ms | p99_ms
     points: List[MetricPoint]
+
+
+class MetricEvent(BaseModel):
+    """Single OTel metric data-point published by javi-collector's MetricProducer.
+
+    JSON field names match the Go ``MetricEvent`` struct so the Kafka
+    message can be deserialised without transformation.
+
+    metric_type values: GAUGE | SUM | HISTOGRAM
+    """
+
+    service_name: str
+    metric_name: str
+    metric_type: str
+    unit: Optional[str] = ""
+    value: float
+    timestamp_ms: int                       # epoch milliseconds
+    attributes: Optional[Dict[str, Any]] = {}
+
+
+class MetricEventBatch(BaseModel):
+    """Batch wrapper used by the HTTP ingest endpoint."""
+
+    metrics: List[MetricEvent]

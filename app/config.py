@@ -18,7 +18,8 @@ class Settings(BaseSettings):
     # Kafka
     KAFKA_ENABLED: bool = False
     KAFKA_BROKERS: str = "localhost:9092"
-    KAFKA_TOPICS: str = "spans.all"   # comma-separated; spans.all includes all spans (accurate RED metrics)
+    KAFKA_TOPICS: str = "spans.all"         # comma-separated span topics; spans.all = accurate RED metrics
+    KAFKA_METRICS_TOPICS: str = "metrics"   # comma-separated OTel metric topics from javi-collector
     KAFKA_GROUP_ID: str = "javi-forecast"
 
     # Forecasting
@@ -38,6 +39,10 @@ class Settings(BaseSettings):
     # Backfill
     BACKFILL_ENABLED: bool = True
     BACKFILL_HOURS: int = 24
+
+    # JVM Analysis
+    JVM_OOM_WARN_MINUTES: float = 30.0      # alert if OOM predicted within N minutes
+    JVM_GC_OVERHEAD_WARN: float = 0.10      # alert if GC overhead > N fraction
 
     class Config:
         env_file = ".env"
