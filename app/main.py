@@ -37,6 +37,7 @@ from .config import settings
 from .consumer.event_handler import EventHandler
 from .consumer.kafka_consumer import KafkaConsumerService
 from .consumer.metric_event_handler import MetricEventHandler
+from .engine.burn_rate_analyzer import BurnRateAnalyzer
 from .engine.feature_store import FeatureStore
 from .engine.forecaster import Forecaster
 from .engine.jvm_analyzer import JvmAnalyzer
@@ -84,6 +85,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         jvm_store=jvm_feature_store,
         alerter=alerter,
     )
+    burn_rate_analyzer = BurnRateAnalyzer(
+        feature_store=feature_store,
+        alerter=alerter,
+    )
     forecaster = Forecaster(
         feature_store=feature_store,
         forecast_store=forecast_store,
@@ -101,6 +106,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.metric_event_handler = metric_event_handler
     app.state.forecaster = forecaster
     app.state.jvm_analyzer = jvm_analyzer
+    app.state.burn_rate_analyzer = burn_rate_analyzer
 
     # ---- ClickHouse ---------------------------------------------------------
     clickhouse: ClickHouseStore | None = None
@@ -153,6 +159,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # ---- JVM Analyzer -------------------------------------------------------
     await jvm_analyzer.start()
 
+    # ---- Burn Rate Analyzer -------------------------------------------------
+    await burn_rate_analyzer.start()
+
     # ---- Forecaster ---------------------------------------------------------
     await forecaster.start()
 
@@ -170,6 +179,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     await forecaster.stop()
     await jvm_analyzer.stop()
+    await burn_rate_analyzer.stop()
 
     if kafka is not None:
         await kafka.stop()

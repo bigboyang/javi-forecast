@@ -17,11 +17,14 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import List, Optional
+from typing import TYPE_CHECKING, List, Optional
 
 import numpy as np
 
 from ..models.forecast import ForecastResult, PredictionPoint
+
+if TYPE_CHECKING:
+    from ..engine.baseline_store import BaselineStore
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +68,7 @@ class AnomalyPredictor:
         self,
         result: ForecastResult,
         historical_values: np.ndarray,
+        baseline_store: Optional["BaselineStore"] = None,
     ) -> Optional[AnomalyPrediction]:
         """Return the first (soonest) anomaly prediction, or None.
 
@@ -74,19 +78,36 @@ class AnomalyPredictor:
             ForecastResult produced by the forecaster.
         historical_values:
             1-D array of the historical observations used to build the
-            forecast.  Used to compute the baseline distribution.
+            forecast.  Used to compute the global baseline distribution.
+        baseline_store:
+            Optional hour-of-week baseline.  When provided, each prediction
+            point is normalised against its matching (weekday, hour) bucket
+            rather than the global mean/std, reducing false positives from
+            predictable traffic patterns.
         """
         if len(historical_values) < 2 or not result.predictions:
             return None
 
-        mean = float(np.mean(historical_values))
-        std = float(np.std(historical_values))
-        if std == 0:
-            std = 1e-6
+        global_mean = float(np.mean(historical_values))
+        global_std = float(np.std(historical_values))
+        if global_std == 0:
+            global_std = 1e-6
 
         now = datetime.now(tz=timezone.utc)
 
         for pt in result.predictions:
+            # Use hour-of-week baseline if available for this slot
+            mean, std = global_mean, global_std
+            if baseline_store is not None and pt.timestamp.tzinfo is not None:
+                slot = baseline_store.get_baseline(
+                    result.service_name,
+                    result.metric_name,
+                    pt.timestamp.weekday(),
+                    pt.timestamp.hour,
+                )
+                if slot is not None:
+                    mean, std = slot
+
             z = (pt.predicted - mean) / std
             abs_z = abs(z)
 
@@ -128,6 +149,7 @@ class AnomalyPredictor:
         self,
         results: List[ForecastResult],
         historical_map: dict[str, np.ndarray],
+        baseline_store: Optional["BaselineStore"] = None,
     ) -> List[AnomalyPrediction]:
         """Analyse a list of forecast results; return all anomaly predictions."""
         predictions: List[AnomalyPrediction] = []
@@ -136,7 +158,7 @@ class AnomalyPredictor:
             historical = historical_map.get(key)
             if historical is None:
                 continue
-            prediction = self.analyse(result, historical)
+            prediction = self.analyse(result, historical, baseline_store=baseline_store)
             if prediction:
                 predictions.append(prediction)
         return predictions

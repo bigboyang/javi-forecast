@@ -19,7 +19,9 @@ import numpy as np
 from ..config import settings
 from ..models.forecast import ForecastResult, ModelType, PredictionPoint
 from ..anomaly.predictor import AnomalyPredictor
+from ..anomaly.isolation_forest import IsolationForestDetector
 from ..alerter.webhook import WebhookAlerter
+from .baseline_store import BaselineStore
 from .feature_store import FeatureStore
 from .metric_feature_store import MetricFeatureStore
 from .selector import select_model
@@ -114,6 +116,13 @@ class Forecaster:
         self.min_data_points = min_data_points
         self.default_model = default_model
 
+        # P2-A: hour-of-week baseline for Z-score normalisation
+        self._baseline_store = BaselineStore()
+        # P2-C: multivariate Isolation Forest detector
+        self._iso_forest = IsolationForestDetector(
+            min_samples=settings.ISO_FOREST_MIN_SAMPLES,
+        )
+
         self._task: Optional[asyncio.Task] = None
         self._running = False
         _init_metrics()
@@ -191,8 +200,37 @@ class Forecaster:
         if self._metric_feature_store is not None:
             await self._run_custom_metric_cycle()
 
+        # P2-C: Isolation Forest multivariate anomaly detection
+        await self._run_isolation_forest_cycle(services)
+
         # Evict stale forecasts
         await self._forecast_store.evict_expired()
+
+    async def _run_isolation_forest_cycle(self, services: List[str]) -> None:
+        """Run IsolationForest on each service's RED metric vectors."""
+        loop = asyncio.get_event_loop()
+        sem = asyncio.Semaphore(4)
+
+        async def _detect(service: str) -> None:
+            async with sem:
+                metrics = self._feature_store.get_red_metrics(
+                    service, window_minutes=self.window_minutes
+                )
+                if not metrics:
+                    return
+                try:
+                    prediction = await loop.run_in_executor(
+                        None, lambda: self._iso_forest.fit_and_predict(service, metrics)
+                    )
+                except Exception as exc:
+                    logger.error(
+                        "IsolationForest failed service=%s: %s", service, exc
+                    )
+                    return
+                if prediction is not None:
+                    await self._alerter.fire(prediction)
+
+        await asyncio.gather(*[_detect(s) for s in services], return_exceptions=True)
 
     async def _run_custom_metric_cycle(self) -> None:
         """Forecast all (service, metric) pairs in MetricFeatureStore."""
@@ -333,6 +371,14 @@ class Forecaster:
         values = np.array([p.value for p in points], dtype=float)
         timestamps = [p.timestamp for p in points]
 
+        # P2-A: update hour-of-week baseline with all historical observations
+        for pt in points:
+            ts = pt.timestamp
+            if ts.tzinfo is None:
+                from datetime import timezone as _tz
+                ts = ts.replace(tzinfo=_tz.utc)
+            self._baseline_store.update(service, metric, ts, pt.value)
+
         # Run in executor to avoid blocking event loop for statsmodels
         loop = asyncio.get_event_loop()
         try:
@@ -395,7 +441,7 @@ class Forecaster:
         else:
             model_type = ModelType.EWMA
 
-        # Anomaly detection
+        # Anomaly detection (P2-A: pass hour-of-week baseline_store)
         anomaly = self._predictor.analyse(
             ForecastResult(
                 service_name=service,
@@ -407,6 +453,7 @@ class Forecaster:
                 mse=float(mse) if mse != float("inf") else None,
             ),
             values,
+            baseline_store=self._baseline_store,
         )
 
         is_anomaly = anomaly is not None

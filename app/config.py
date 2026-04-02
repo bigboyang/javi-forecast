@@ -44,6 +44,17 @@ class Settings(BaseSettings):
     JVM_OOM_WARN_MINUTES: float = 30.0      # alert if OOM predicted within N minutes
     JVM_GC_OVERHEAD_WARN: float = 0.10      # alert if GC overhead > N fraction
 
+    # P2-A: Hour-of-week baseline
+    BASELINE_MIN_OBSERVATIONS: int = 5      # min bucket obs before baseline is used
+
+    # P2-B: SLO burn rate alerting
+    SLO_TARGET: float = 0.999               # 99.9 % availability target
+    SLO_PAGE_BURN_RATE: float = 14.4        # critical if fast+slow burn > this
+    SLO_TICKET_BURN_RATE: float = 6.0       # warn if fast+slow burn > this
+
+    # P2-C: Isolation Forest
+    ISO_FOREST_MIN_SAMPLES: int = 50        # min RED vectors before fitting
+
     class Config:
         env_file = ".env"
 
