@@ -9,6 +9,7 @@ class ModelType(str, Enum):
     ARIMA = "arima"
     HOLTWINTERS = "holtwinters"
     AUTO = "auto"
+    VAR = "var"
 
 
 class PredictionPoint(BaseModel):

@@ -38,11 +38,14 @@ from .consumer.event_handler import EventHandler
 from .consumer.kafka_consumer import KafkaConsumerService
 from .consumer.metric_event_handler import MetricEventHandler
 from .engine.burn_rate_analyzer import BurnRateAnalyzer
+from .engine.dependency_map import DependencyMap
 from .engine.feature_store import FeatureStore
 from .engine.forecaster import Forecaster
+from .engine.granger_analyzer import GrangerAnalyzer
 from .engine.jvm_analyzer import JvmAnalyzer
 from .engine.jvm_feature_store import JvmFeatureStore
 from .engine.metric_feature_store import MetricFeatureStore
+from .engine.var_forecaster import VarForecaster
 from .store.clickhouse import ClickHouseStore
 from .store.forecast_store import ForecastStore
 
@@ -89,6 +92,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         feature_store=feature_store,
         alerter=alerter,
     )
+    dependency_map = DependencyMap(p_value_threshold=settings.GRANGER_P_THRESHOLD)
+    var_forecaster = VarForecaster(
+        feature_store=feature_store,
+        forecast_store=forecast_store,
+    )
+    granger_analyzer = GrangerAnalyzer(
+        feature_store=feature_store,
+        dependency_map=dependency_map,
+    )
     forecaster = Forecaster(
         feature_store=feature_store,
         forecast_store=forecast_store,
@@ -107,6 +119,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.forecaster = forecaster
     app.state.jvm_analyzer = jvm_analyzer
     app.state.burn_rate_analyzer = burn_rate_analyzer
+    app.state.dependency_map = dependency_map
+    app.state.var_forecaster = var_forecaster
+    app.state.granger_analyzer = granger_analyzer
 
     # ---- ClickHouse ---------------------------------------------------------
     clickhouse: ClickHouseStore | None = None
@@ -162,6 +177,18 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # ---- Burn Rate Analyzer -------------------------------------------------
     await burn_rate_analyzer.start()
 
+    # ---- VAR Forecaster (P3-A) ----------------------------------------------
+    if settings.VAR_ENABLED:
+        await var_forecaster.start()
+    else:
+        logger.info("VarForecaster disabled (VAR_ENABLED=false)")
+
+    # ---- Granger Analyzer (P3-B/C) ------------------------------------------
+    if settings.GRANGER_ENABLED:
+        await granger_analyzer.start()
+    else:
+        logger.info("GrangerAnalyzer disabled (GRANGER_ENABLED=false)")
+
     # ---- Forecaster ---------------------------------------------------------
     await forecaster.start()
 
@@ -180,6 +207,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await forecaster.stop()
     await jvm_analyzer.stop()
     await burn_rate_analyzer.stop()
+    if settings.VAR_ENABLED:
+        await var_forecaster.stop()
+    if settings.GRANGER_ENABLED:
+        await granger_analyzer.stop()
 
     if kafka is not None:
         await kafka.stop()

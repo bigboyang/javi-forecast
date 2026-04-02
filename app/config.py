@@ -55,6 +55,14 @@ class Settings(BaseSettings):
     # P2-C: Isolation Forest
     ISO_FOREST_MIN_SAMPLES: int = 50        # min RED vectors before fitting
 
+    # P3-A: VAR cross-service forecaster
+    VAR_ENABLED: bool = True
+
+    # P3-B/C: Granger causality + dependency map
+    GRANGER_ENABLED: bool = True
+    GRANGER_INTERVAL_SECONDS: int = 600     # run Granger tests every 10 minutes
+    GRANGER_P_THRESHOLD: float = 0.05      # significance level for causal edges
+
     class Config:
         env_file = ".env"
 
