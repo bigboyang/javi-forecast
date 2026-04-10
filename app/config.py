@@ -9,7 +9,7 @@ class Settings(BaseSettings):
 
     # ClickHouse
     CLICKHOUSE_HOST: str = "localhost"
-    CLICKHOUSE_PORT: int = 9000
+    CLICKHOUSE_PORT: int = 8123  # clickhouse-connect uses HTTP; native TCP is 9000
     CLICKHOUSE_DB: str = "apm"
     CLICKHOUSE_USER: str = "default"
     CLICKHOUSE_PASSWORD: str = ""
@@ -25,7 +25,7 @@ class Settings(BaseSettings):
     # Forecasting
     FORECAST_HORIZON_MINUTES: int = 30       # predict N minutes ahead
     FORECAST_INTERVAL_SECONDS: int = 60      # run forecast every N seconds
-    FEATURE_WINDOW_MINUTES: int = 60         # lookback window for features
+    FEATURE_WINDOW_MINUTES: int = 1440       # lookback window for features (24 h)
     MIN_DATA_POINTS: int = 10                # minimum points before forecasting
 
     # Model selection
@@ -62,6 +62,13 @@ class Settings(BaseSettings):
     GRANGER_ENABLED: bool = True
     GRANGER_INTERVAL_SECONDS: int = 600     # run Granger tests every 10 minutes
     GRANGER_P_THRESHOLD: float = 0.05      # significance level for causal edges
+
+    # RAG / LLM (Text-to-SQL)
+    RAG_ENABLED: bool = False
+    ANTHROPIC_API_KEY: Optional[str] = None
+    LLM_MODEL: str = "claude-sonnet-4-6"   # Anthropic model for SQL generation
+    RAG_MAX_ROWS: int = 500                 # cap rows returned from generated SQL
+    RAG_SQL_TIMEOUT_SECONDS: int = 30      # max ClickHouse query time for RAG
 
     class Config:
         env_file = ".env"

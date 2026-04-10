@@ -116,10 +116,10 @@ class ClickHouseStore:
     async def query_services(self) -> List[str]:
         """Return the list of distinct service names seen in the last 24 h."""
         sql = """
-            SELECT DISTINCT ServiceName
+            SELECT DISTINCT service_name
             FROM apm.spans
-            WHERE Timestamp >= now() - INTERVAL 24 HOUR
-            ORDER BY ServiceName
+            WHERE start_time_nano >= toInt64(now() - INTERVAL 24 HOUR) * 1000000000
+            ORDER BY service_name
         """
         result = await self._query(sql)
         return [row[0] for row in result.result_rows]
@@ -149,19 +149,23 @@ class ClickHouseStore:
         from_ts: datetime,
         to_ts: datetime,
     ) -> List[REDMetric]:
+        # Use mv_red_1m_state (1-minute aggregated MV) as the primary source.
+        # apm.red_baseline only stores hourly baselines without time-series data.
         sql = """
             SELECT
                 service_name,
-                toStartOfMinute(timestamp)       AS ts,
-                avg(rate)                         AS rate,
-                avg(error_rate)                   AS error_rate,
-                quantile(0.50)(p50_ms)            AS p50_ms,
-                quantile(0.95)(p95_ms)            AS p95_ms,
-                quantile(0.99)(p99_ms)            AS p99_ms
-            FROM apm.red_baseline
+                minute                                                              AS ts,
+                sum(total_count) / 60.0                                            AS rate,
+                if(sum(total_count) > 0,
+                   toFloat64(sum(error_count)) / toFloat64(sum(total_count)),
+                   0.0)                                                            AS error_rate,
+                quantilesMerge(0.5, 0.95, 0.99)(duration_quantiles)[1] / 1e6     AS p50_ms,
+                quantilesMerge(0.5, 0.95, 0.99)(duration_quantiles)[2] / 1e6     AS p95_ms,
+                quantilesMerge(0.5, 0.95, 0.99)(duration_quantiles)[3] / 1e6     AS p99_ms
+            FROM apm.mv_red_1m_state
             WHERE service_name = {service:String}
-              AND timestamp >= {from_ts:DateTime}
-              AND timestamp <= {to_ts:DateTime}
+              AND minute >= {from_ts:DateTime}
+              AND minute <= {to_ts:DateTime}
             GROUP BY service_name, ts
             ORDER BY ts ASC
         """
@@ -190,28 +194,27 @@ class ClickHouseStore:
         from_ts: datetime,
         to_ts: datetime,
     ) -> List[REDMetric]:
-        """Compute RED metrics directly from raw spans (slower)."""
+        """Compute RED metrics directly from raw spans (slower fallback)."""
         sql = """
             SELECT
-                ServiceName,
-                toStartOfMinute(toDateTime(intDiv(Timestamp, 1000000000))) AS ts,
-                count()                                       AS total,
-                countIf(SpanAttributes['error'] = 'true'
-                     OR StatusCode = 2)                       AS errors,
+                service_name,
+                toStartOfMinute(toDateTime(intDiv(start_time_nano, 1000000000))) AS ts,
+                count()                                           AS total,
+                countIf(is_error = 1)                            AS errors,
                 quantile(0.50)(
-                    (EndTimeUnixNano - StartTimeUnixNano) / 1e6
-                )                                             AS p50_ms,
+                    (end_time_nano - start_time_nano) / 1e6
+                )                                                AS p50_ms,
                 quantile(0.95)(
-                    (EndTimeUnixNano - StartTimeUnixNano) / 1e6
-                )                                             AS p95_ms,
+                    (end_time_nano - start_time_nano) / 1e6
+                )                                                AS p95_ms,
                 quantile(0.99)(
-                    (EndTimeUnixNano - StartTimeUnixNano) / 1e6
-                )                                             AS p99_ms
+                    (end_time_nano - start_time_nano) / 1e6
+                )                                                AS p99_ms
             FROM apm.spans
-            WHERE ServiceName = {service:String}
-              AND toDateTime(intDiv(Timestamp, 1000000000)) >= {from_ts:DateTime}
-              AND toDateTime(intDiv(Timestamp, 1000000000)) <= {to_ts:DateTime}
-            GROUP BY ServiceName, ts
+            WHERE service_name = {service:String}
+              AND toDateTime(intDiv(start_time_nano, 1000000000)) >= {from_ts:DateTime}
+              AND toDateTime(intDiv(start_time_nano, 1000000000)) <= {to_ts:DateTime}
+            GROUP BY service_name, ts
             ORDER BY ts ASC
         """
         result = await self._query(
@@ -226,8 +229,8 @@ class ClickHouseStore:
                 REDMetric(
                     service_name=str(row[0]),
                     timestamp=_ensure_utc(row[1]),
-                    rate=total / 60.0,
-                    error_rate=errors / total if total else 0.0,
+                    rate=float(total) / 60.0,
+                    error_rate=float(errors) / float(total) if total else 0.0,
                     p50_ms=float(row[4]),
                     p95_ms=float(row[5]),
                     p99_ms=float(row[6]),
