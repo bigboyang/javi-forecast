@@ -36,6 +36,7 @@ from .alerter.webhook import WebhookAlerter
 from .config import settings
 from .consumer.event_handler import EventHandler
 from .consumer.kafka_consumer import KafkaConsumerService
+from .consumer.log_event_handler import LogEventHandler
 from .consumer.metric_event_handler import MetricEventHandler
 from .engine.burn_rate_analyzer import BurnRateAnalyzer
 from .engine.dependency_map import DependencyMap
@@ -101,12 +102,35 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         feature_store=feature_store,
         dependency_map=dependency_map,
     )
+    # ---- Incident store (Phase 2 RAG) ---------------------------------------
+    incident_store = None
+    if settings.RAG_ENABLED and settings.INCIDENT_RAG_ENABLED:
+        from .rag.incident_store import IncidentStore
+        incident_store = IncidentStore(persist_directory=settings.INCIDENT_STORE_PATH)
+        logger.info("IncidentStore initialised at %s", settings.INCIDENT_STORE_PATH)
+
+    app.state.incident_store = incident_store
+
+    # ---- Log store (Phase 3 RAG) --------------------------------------------
+    log_store = None
+    log_event_handler: LogEventHandler | None = None
+    if settings.RAG_ENABLED and settings.LOG_RAG_ENABLED:
+        from .rag.log_store import LogStore
+        log_store = LogStore(persist_directory=settings.LOG_STORE_PATH)
+        log_event_handler = LogEventHandler(log_store)
+        logger.info("LogStore initialised at %s", settings.LOG_STORE_PATH)
+    else:
+        logger.info("Log RAG disabled (LOG_RAG_ENABLED=false or RAG_ENABLED=false)")
+
+    app.state.log_store = log_store
+
     forecaster = Forecaster(
         feature_store=feature_store,
         forecast_store=forecast_store,
         anomaly_predictor=anomaly_predictor,
         alerter=alerter,
         metric_feature_store=metric_feature_store,
+        incident_store=incident_store,
     )
 
     # Expose shared state via app.state for dependency injection
@@ -160,6 +184,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         kafka = KafkaConsumerService(
             event_handler=event_handler,
             metric_handler=metric_event_handler,
+            log_handler=log_event_handler,
         )
         try:
             await kafka.start()

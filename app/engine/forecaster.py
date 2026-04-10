@@ -12,13 +12,13 @@ import asyncio
 import logging
 import time
 from datetime import datetime, timezone, timedelta
-from typing import Dict, List, Optional
+from typing import TYPE_CHECKING, Dict, List, Optional
 
 import numpy as np
 
 from ..config import settings
 from ..models.forecast import ForecastResult, ModelType, PredictionPoint
-from ..anomaly.predictor import AnomalyPredictor
+from ..anomaly.predictor import AnomalyPredictor, AnomalyPrediction
 from ..anomaly.isolation_forest import IsolationForestDetector
 from ..alerter.webhook import WebhookAlerter
 from .baseline_store import BaselineStore
@@ -26,6 +26,9 @@ from .feature_store import FeatureStore
 from .metric_feature_store import MetricFeatureStore
 from .selector import select_model
 from ..store.forecast_store import ForecastStore
+
+if TYPE_CHECKING:
+    from ..rag.incident_store import IncidentStore
 
 logger = logging.getLogger(__name__)
 
@@ -99,6 +102,7 @@ class Forecaster:
         anomaly_predictor: AnomalyPredictor,
         alerter: WebhookAlerter,
         metric_feature_store: Optional[MetricFeatureStore] = None,
+        incident_store: Optional["IncidentStore"] = None,
         interval_seconds: int = settings.FORECAST_INTERVAL_SECONDS,
         horizon_minutes: int = settings.FORECAST_HORIZON_MINUTES,
         window_minutes: int = settings.FEATURE_WINDOW_MINUTES,
@@ -110,6 +114,7 @@ class Forecaster:
         self._forecast_store = forecast_store
         self._predictor = anomaly_predictor
         self._alerter = alerter
+        self._incident_store = incident_store
         self.interval_seconds = interval_seconds
         self.horizon_minutes = horizon_minutes
         self.window_minutes = window_minutes
@@ -150,6 +155,27 @@ class Forecaster:
             except asyncio.CancelledError:
                 pass
         logger.info("Forecaster stopped")
+
+    # ------------------------------------------------------------------
+    # Incident persistence
+    # ------------------------------------------------------------------
+
+    def _save_incident(self, anomaly: AnomalyPrediction) -> None:
+        """Persist anomaly to IncidentStore if one is configured."""
+        if self._incident_store is None:
+            return
+        try:
+            self._incident_store.add_incident(
+                service_name=anomaly.service_name,
+                metric_name=anomaly.metric_name,
+                severity=anomaly.severity,
+                predicted_value=anomaly.predicted_value,
+                expected_value=anomaly.expected_value,
+                z_score=anomaly.z_score,
+                timestamp=anomaly.predicted_at,
+            )
+        except Exception as exc:
+            logger.error("Failed to save incident to store: %s", exc)
 
     # ------------------------------------------------------------------
     # Internal loop
@@ -346,6 +372,7 @@ class Forecaster:
 
         if anomaly:
             await self._alerter.fire(anomaly)
+            self._save_incident(anomaly)
 
         logger.debug(
             "Custom metric forecast stored service=%s metric=%s model=%s anomaly=%s",
@@ -484,6 +511,7 @@ class Forecaster:
                     service=service, severity=anomaly.severity
                 ).inc()
             await self._alerter.fire(anomaly)
+            self._save_incident(anomaly)
 
         logger.debug(
             "Forecast stored service=%s metric=%s model=%s mse=%s anomaly=%s",

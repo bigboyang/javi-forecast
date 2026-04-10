@@ -13,3 +13,5 @@ httpx>=0.27.0
 python-dotenv>=1.0.0
 # RAG / Text-to-SQL (optional – required when RAG_ENABLED=true)
 anthropic>=0.25.0
+# RAG / Incident store (optional – required when INCIDENT_RAG_ENABLED=true)
+chromadb>=0.4.0

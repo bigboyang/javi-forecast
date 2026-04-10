@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     KAFKA_BROKERS: str = "localhost:9092"
     KAFKA_TOPICS: str = "spans.all"         # comma-separated span topics; spans.all = accurate RED metrics
     KAFKA_METRICS_TOPICS: str = "metrics"   # comma-separated OTel metric topics from javi-collector
+    KAFKA_LOG_TOPICS: str = "logs"          # comma-separated OTel log topics from javi-collector
     KAFKA_GROUP_ID: str = "javi-forecast"
 
     # Forecasting
@@ -69,6 +70,14 @@ class Settings(BaseSettings):
     LLM_MODEL: str = "claude-sonnet-4-6"   # Anthropic model for SQL generation
     RAG_MAX_ROWS: int = 500                 # cap rows returned from generated SQL
     RAG_SQL_TIMEOUT_SECONDS: int = 30      # max ClickHouse query time for RAG
+
+    # RAG / Incident store (Phase 2)
+    INCIDENT_RAG_ENABLED: bool = False     # enable Incident RAG (requires RAG_ENABLED=true)
+    INCIDENT_STORE_PATH: str = "/tmp/javi_incidents"  # ChromaDB persist directory
+
+    # RAG / Log store (Phase 3)
+    LOG_RAG_ENABLED: bool = False          # enable Log RAG (requires RAG_ENABLED=true)
+    LOG_STORE_PATH: str = "/tmp/javi_logs"  # ChromaDB persist directory for logs
 
     class Config:
         env_file = ".env"
