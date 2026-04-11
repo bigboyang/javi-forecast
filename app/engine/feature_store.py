@@ -85,6 +85,8 @@ class FeatureStore:
         self._buckets: Dict[str, _Bucket] = {}
         # per-service locks
         self._locks: Dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
+        # service → set of ingested minute timestamps (for backfill dedup)
+        self._ts_index: Dict[str, set] = defaultdict(set)
 
     # ------------------------------------------------------------------
     # Public write API
@@ -110,10 +112,17 @@ class FeatureStore:
             bucket.add(span)
 
     async def ingest_red(self, metric: REDMetric) -> None:
-        """Directly insert a pre-computed REDMetric (used during backfill)."""
+        """Directly insert a pre-computed REDMetric (used during backfill).
+
+        Silently skips duplicate minute timestamps to prevent double-counting
+        when backfill and the Kafka consumer overlap in time.
+        """
         service = metric.service_name
         async with self._locks[service]:
             minute_ts = _truncate_to_minute(metric.timestamp)
+            if minute_ts in self._ts_index[service]:
+                return  # deduplicate
+            self._ts_index[service].add(minute_ts)
             self._series[service].append((minute_ts, metric))
 
     async def flush_open_buckets(self) -> None:
@@ -184,6 +193,7 @@ class FeatureStore:
         if bucket.count == 0:
             return
         red = bucket.to_red(service)
+        self._ts_index[service].add(bucket.minute_ts)
         self._series[service].append((bucket.minute_ts, red))
         logger.debug(
             "flushed bucket service=%s ts=%s count=%d",

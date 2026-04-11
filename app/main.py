@@ -41,11 +41,13 @@ from .consumer.metric_event_handler import MetricEventHandler
 from .engine.burn_rate_analyzer import BurnRateAnalyzer
 from .engine.dependency_map import DependencyMap
 from .engine.feature_store import FeatureStore
+from .engine.feedback_store import FeedbackStore as AlertFeedbackStore
 from .engine.forecaster import Forecaster
 from .engine.granger_analyzer import GrangerAnalyzer
 from .engine.jvm_analyzer import JvmAnalyzer
 from .engine.jvm_feature_store import JvmFeatureStore
 from .engine.metric_feature_store import MetricFeatureStore
+from .engine.span_topology import SpanTopologyTracker
 from .engine.var_forecaster import VarForecaster
 from .store.clickhouse import ClickHouseStore
 from .store.forecast_store import ForecastStore
@@ -53,6 +55,20 @@ from .store.forecast_store import ForecastStore
 # ---------------------------------------------------------------------------
 # Logging configuration
 # ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Instance identity metric
+# ---------------------------------------------------------------------------
+
+
+def _register_instance_metric(instance_id: str) -> None:
+    """Expose javi_forecast_instance_info gauge so dashboards can identify replicas."""
+    try:
+        from prometheus_client import Info
+        info = Info("javi_forecast_instance", "javi-forecast instance metadata")
+        info.info({"instance_id": instance_id})
+    except Exception:
+        pass
 
 # kafka 구독 추가, 메시지 처리 로직 추가
 
@@ -71,14 +87,25 @@ logger = logging.getLogger("javi_forecast")
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Manage startup and shutdown of background services."""
-    logger.info("javi-forecast starting up …")
+    logger.info("javi-forecast starting up … instance_id=%s", settings.INSTANCE_ID)
+
+    # ---- Multi-instance safety check ------------------------------------
+    if settings.REDIS_URL is None:
+        logger.warning(
+            "REDIS_URL is not set – FeatureStore is in-memory only. "
+            "Running multiple replicas will result in split-brain forecasts. "
+            "Set REDIS_URL and INSTANCE_ID for HA deployments."
+        )
+    _register_instance_metric(settings.INSTANCE_ID)
 
     # ---- Build shared components ----------------------------------------
     feature_store = FeatureStore(maxlen=4320)              # 72 h at 1-min cadence
     jvm_feature_store = JvmFeatureStore(maxlen=4320)       # 72 h at 1-min cadence
     metric_feature_store = MetricFeatureStore(maxlen=4320) # 72 h at 1-min cadence
     forecast_store = ForecastStore(ttl_seconds=3600)
-    event_handler = EventHandler(feature_store)
+    span_topology = SpanTopologyTracker()
+    feedback_store = AlertFeedbackStore(ttl_seconds=7 * 86400)
+    event_handler = EventHandler(feature_store, topology_tracker=span_topology)
     metric_event_handler = MetricEventHandler(metric_feature_store)
     anomaly_predictor = AnomalyPredictor(
         warn_z=settings.ALERT_FORECAST_THRESHOLD,
@@ -146,6 +173,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.dependency_map = dependency_map
     app.state.var_forecaster = var_forecaster
     app.state.granger_analyzer = granger_analyzer
+    app.state.span_topology = span_topology
+    app.state.feedback_store = feedback_store
 
     # ---- ClickHouse ---------------------------------------------------------
     clickhouse: ClickHouseStore | None = None

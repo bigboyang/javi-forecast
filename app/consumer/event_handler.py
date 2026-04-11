@@ -7,8 +7,10 @@ endpoint so that all span ingestion goes through a single code path.
 from __future__ import annotations
 
 import logging
+from typing import Optional
 
 from ..engine.feature_store import FeatureStore
+from ..engine.span_topology import SpanTopologyTracker
 from ..models.span import SpanEvent
 
 logger = logging.getLogger(__name__)
@@ -33,16 +35,23 @@ def _get_counter():
 
 
 class EventHandler:
-    """Routes span events to the FeatureStore.
+    """Routes span events to the FeatureStore and topology tracker.
 
     Parameters
     ----------
     feature_store:
         Shared FeatureStore instance.
+    topology_tracker:
+        Optional SpanTopologyTracker for real-time service call graph.
     """
 
-    def __init__(self, feature_store: FeatureStore) -> None:
+    def __init__(
+        self,
+        feature_store: FeatureStore,
+        topology_tracker: Optional[SpanTopologyTracker] = None,
+    ) -> None:
         self._store = feature_store
+        self._topology = topology_tracker
 
     async def handle(self, span: SpanEvent) -> None:
         """Process a single span event.
@@ -54,6 +63,8 @@ class EventHandler:
         """
         try:
             await self._store.update(span)
+            if self._topology is not None:
+                self._topology.record(span)
             counter = _get_counter()
             if counter is not None:
                 counter.labels(service=span.service_name).inc()

@@ -10,6 +10,8 @@ from .prometheus import router as prometheus_router
 from .jvm import router as jvm_router
 from .dependency import router as dependency_router
 from .rag import router as rag_router
+from .topology import router as topology_router
+from .feedback import router as feedback_router
 
 api_router = APIRouter()
 
@@ -21,3 +23,5 @@ api_router.include_router(prometheus_router)
 api_router.include_router(jvm_router)
 api_router.include_router(dependency_router)
 api_router.include_router(rag_router)
+api_router.include_router(topology_router)
+api_router.include_router(feedback_router)

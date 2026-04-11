@@ -45,6 +45,41 @@ logger = logging.getLogger(__name__)
 
 _POLL_TIMEOUT_MS = 1000
 _MAX_BATCH_SIZE = 500
+_LAG_REPORT_INTERVAL_SECONDS = 30
+
+# Prometheus – lazy init
+_lag_gauge = None
+_messages_counter = None
+
+
+def _get_lag_gauge():
+    global _lag_gauge
+    if _lag_gauge is None:
+        try:
+            from prometheus_client import Gauge
+            _lag_gauge = Gauge(
+                "javi_forecast_kafka_consumer_lag",
+                "Kafka consumer lag (messages behind head) per topic-partition",
+                ["topic", "partition"],
+            )
+        except Exception:
+            pass
+    return _lag_gauge
+
+
+def _get_messages_counter():
+    global _messages_counter
+    if _messages_counter is None:
+        try:
+            from prometheus_client import Counter
+            _messages_counter = Counter(
+                "javi_forecast_kafka_messages_consumed_total",
+                "Total Kafka messages consumed per topic",
+                ["topic"],
+            )
+        except Exception:
+            pass
+    return _messages_counter
 
 
 class KafkaConsumerService:
@@ -115,6 +150,7 @@ class KafkaConsumerService:
         self._group_id = group_id or settings.KAFKA_GROUP_ID
         self._consumer = None
         self._task: Optional[asyncio.Task] = None
+        self._lag_task: Optional[asyncio.Task] = None
         self._running = False
 
     # ------------------------------------------------------------------
@@ -142,6 +178,9 @@ class KafkaConsumerService:
         self._task = asyncio.create_task(
             self._consume_loop(), name="kafka-consumer"
         )
+        self._lag_task = asyncio.create_task(
+            self._lag_reporter_loop(), name="kafka-lag-reporter"
+        )
         logger.info(
             "Kafka consumer started brokers=%s span_topics=%s metric_topics=%s log_topics=%s group=%s",
             self._brokers,
@@ -154,12 +193,13 @@ class KafkaConsumerService:
     async def stop(self) -> None:
         """Gracefully stop the consumer."""
         self._running = False
-        if self._task:
-            self._task.cancel()
-            try:
-                await self._task
-            except asyncio.CancelledError:
-                pass
+        for task in (self._task, self._lag_task):
+            if task:
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
         if self._consumer:
             await self._consumer.stop()
             self._consumer = None
@@ -169,14 +209,43 @@ class KafkaConsumerService:
     # Internal
     # ------------------------------------------------------------------
 
+    async def _lag_reporter_loop(self) -> None:
+        """Periodically fetch end offsets from broker and report consumer lag."""
+        while self._running:
+            await asyncio.sleep(_LAG_REPORT_INTERVAL_SECONDS)
+            if self._consumer is None:
+                continue
+            gauge = _get_lag_gauge()
+            if gauge is None:
+                continue
+            try:
+                assignment = self._consumer.assignment()
+                if not assignment:
+                    continue
+                end_offsets = await self._consumer.end_offsets(list(assignment))
+                for tp, end_offset in end_offsets.items():
+                    try:
+                        position = await self._consumer.position(tp)
+                        lag = max(0, end_offset - position)
+                        gauge.labels(topic=tp.topic, partition=str(tp.partition)).set(lag)
+                    except Exception:
+                        pass
+            except asyncio.CancelledError:
+                break
+            except Exception as exc:
+                logger.debug("Lag report failed: %s", exc)
+
     async def _consume_loop(self) -> None:
         """Main polling loop – dispatches by topic."""
         assert self._consumer is not None
+        counter = _get_messages_counter()
         while self._running:
             try:
                 async for msg in self._consumer:
                     if not self._running:
                         break
+                    if counter is not None:
+                        counter.labels(topic=msg.topic).inc()
                     if msg.topic in self._log_topics:
                         await self._process_log_message(msg.value)
                     elif msg.topic in self._metric_topics:

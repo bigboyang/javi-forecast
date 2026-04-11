@@ -79,6 +79,10 @@ class Settings(BaseSettings):
     LOG_RAG_ENABLED: bool = False          # enable Log RAG (requires RAG_ENABLED=true)
     LOG_STORE_PATH: str = "/tmp/javi_logs"  # ChromaDB persist directory for logs
 
+    # Multi-instance / HA
+    INSTANCE_ID: str = "default"           # unique ID per replica; used in log/metric labels
+    REDIS_URL: Optional[str] = None        # e.g. redis://localhost:6379 – set for multi-instance FeatureStore sharing (not yet implemented)
+
     class Config:
         env_file = ".env"
 
