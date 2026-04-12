@@ -79,6 +79,14 @@ class Settings(BaseSettings):
     LOG_RAG_ENABLED: bool = False          # enable Log RAG (requires RAG_ENABLED=true)
     LOG_STORE_PATH: str = "/tmp/javi_logs"  # ChromaDB persist directory for logs
 
+    # P2-B: STL anomaly detection
+    STL_ENABLED: bool = True
+    STL_PERIOD: int = 60           # seasonality period in data points (60 min @ 1-min cadence)
+    STL_THRESHOLD_Z: float = 3.0   # residual z-score threshold for anomaly
+
+    # P2-C: FeatureStore cardinality limiting
+    MAX_FEATURE_STORE_SERVICES: int = 1000  # max services before LRU eviction
+
     # Multi-instance / HA
     INSTANCE_ID: str = "default"           # unique ID per replica; used in log/metric labels
     REDIS_URL: Optional[str] = None        # e.g. redis://localhost:6379 – set for multi-instance FeatureStore sharing (not yet implemented)

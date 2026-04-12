@@ -20,6 +20,7 @@ from ..config import settings
 from ..models.forecast import ForecastResult, ModelType, PredictionPoint
 from ..anomaly.predictor import AnomalyPredictor, AnomalyPrediction
 from ..anomaly.isolation_forest import IsolationForestDetector
+from ..anomaly.stl_detector import STLAnomalyDetector
 from ..alerter.webhook import WebhookAlerter
 from .baseline_store import BaselineStore
 from .feature_store import FeatureStore
@@ -127,6 +128,11 @@ class Forecaster:
         self._iso_forest = IsolationForestDetector(
             min_samples=settings.ISO_FOREST_MIN_SAMPLES,
         )
+        # P2-B: STL seasonal decomposition anomaly detector
+        self._stl_detector = STLAnomalyDetector(
+            period=settings.STL_PERIOD,
+            threshold_z=settings.STL_THRESHOLD_Z,
+        )
 
         self._task: Optional[asyncio.Task] = None
         self._running = False
@@ -229,6 +235,10 @@ class Forecaster:
         # P2-C: Isolation Forest multivariate anomaly detection
         await self._run_isolation_forest_cycle(services)
 
+        # P2-B: STL seasonal decomposition anomaly detection
+        if settings.STL_ENABLED:
+            await self._run_stl_cycle(services)
+
         # Evict stale forecasts
         await self._forecast_store.evict_expired()
 
@@ -257,6 +267,57 @@ class Forecaster:
                     await self._alerter.fire(prediction)
 
         await asyncio.gather(*[_detect(s) for s in services], return_exceptions=True)
+
+    async def _run_stl_cycle(self, services: List[str]) -> None:
+        """Run STL decomposition anomaly detection on each (service, metric)."""
+        loop = asyncio.get_event_loop()
+        now = datetime.now(tz=timezone.utc)
+        sem = asyncio.Semaphore(4)
+
+        async def _detect(service: str, metric: str) -> None:
+            async with sem:
+                points = self._feature_store.get_series(
+                    service, metric, window_minutes=self.window_minutes
+                )
+                if len(points) < 2 * settings.STL_PERIOD:
+                    return
+                values = np.array([p.value for p in points], dtype=float)
+                try:
+                    result = await loop.run_in_executor(
+                        None, lambda: self._stl_detector.detect(values)
+                    )
+                except Exception as exc:
+                    logger.error(
+                        "STL detection failed service=%s metric=%s: %s",
+                        service, metric, exc,
+                    )
+                    return
+                if result is None or not result.is_anomaly:
+                    return
+                severity = "critical" if result.residual_z >= settings.STL_THRESHOLD_Z + 1.0 else "warn"
+                logger.warning(
+                    "STL anomaly service=%s metric=%s residual_z=%.2f trend=%.4f severity=%s",
+                    service, metric, result.residual_z, result.trend, severity,
+                )
+                anomaly = AnomalyPrediction(
+                    service_name=service,
+                    metric_name=f"stl:{metric}",
+                    severity=severity,
+                    predicted_value=float(values[-1]),
+                    expected_value=round(result.trend + result.seasonal, 6),
+                    z_score=result.residual_z,
+                    predicted_at=now,
+                    seconds_until_anomaly=0.0,
+                )
+                await self._alerter.fire(anomaly)
+                self._save_incident(anomaly)
+
+        tasks = [
+            _detect(service, metric)
+            for service in services
+            for metric in _METRIC_NAMES
+        ]
+        await asyncio.gather(*tasks, return_exceptions=True)
 
     async def _run_custom_metric_cycle(self) -> None:
         """Forecast all (service, metric) pairs in MetricFeatureStore."""

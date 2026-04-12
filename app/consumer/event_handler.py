@@ -10,6 +10,7 @@ import logging
 from typing import Optional
 
 from ..engine.feature_store import FeatureStore
+from ..engine.service_registry import ServiceRegistry
 from ..engine.span_topology import SpanTopologyTracker
 from ..models.span import SpanEvent
 
@@ -49,9 +50,11 @@ class EventHandler:
         self,
         feature_store: FeatureStore,
         topology_tracker: Optional[SpanTopologyTracker] = None,
+        service_registry: Optional[ServiceRegistry] = None,
     ) -> None:
         self._store = feature_store
         self._topology = topology_tracker
+        self._registry = service_registry
 
     async def handle(self, span: SpanEvent) -> None:
         """Process a single span event.
@@ -65,6 +68,8 @@ class EventHandler:
             await self._store.update(span)
             if self._topology is not None:
                 self._topology.record(span)
+            if self._registry is not None:
+                self._registry.update_from_span(span)
             counter = _get_counter()
             if counter is not None:
                 counter.labels(service=span.service_name).inc()

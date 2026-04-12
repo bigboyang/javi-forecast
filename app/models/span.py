@@ -11,6 +11,7 @@ class SpanEvent(BaseModel):
     start_time_nano: int
     end_time_nano: int
     attributes: Dict[str, Any] = {}
+    resource_attributes: Dict[str, Any] = {}  # OTel Resource attributes (service.version, k8s.*, etc.)
     status_code: int = 0   # 0=UNSET, 1=OK, 2=ERROR
     status_message: str = ""
     service_name: str

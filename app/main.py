@@ -41,6 +41,7 @@ from .consumer.metric_event_handler import MetricEventHandler
 from .engine.burn_rate_analyzer import BurnRateAnalyzer
 from .engine.dependency_map import DependencyMap
 from .engine.feature_store import FeatureStore
+from .engine.service_registry import ServiceRegistry
 from .engine.feedback_store import FeedbackStore as AlertFeedbackStore
 from .engine.forecaster import Forecaster
 from .engine.granger_analyzer import GrangerAnalyzer
@@ -99,13 +100,18 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     _register_instance_metric(settings.INSTANCE_ID)
 
     # ---- Build shared components ----------------------------------------
-    feature_store = FeatureStore(maxlen=4320)              # 72 h at 1-min cadence
+    feature_store = FeatureStore(maxlen=4320, max_services=settings.MAX_FEATURE_STORE_SERVICES)  # 72 h at 1-min cadence
     jvm_feature_store = JvmFeatureStore(maxlen=4320)       # 72 h at 1-min cadence
     metric_feature_store = MetricFeatureStore(maxlen=4320) # 72 h at 1-min cadence
     forecast_store = ForecastStore(ttl_seconds=3600)
     span_topology = SpanTopologyTracker()
     feedback_store = AlertFeedbackStore(ttl_seconds=7 * 86400)
-    event_handler = EventHandler(feature_store, topology_tracker=span_topology)
+    service_registry = ServiceRegistry()
+    event_handler = EventHandler(
+        feature_store,
+        topology_tracker=span_topology,
+        service_registry=service_registry,
+    )
     metric_event_handler = MetricEventHandler(metric_feature_store)
     anomaly_predictor = AnomalyPredictor(
         warn_z=settings.ALERT_FORECAST_THRESHOLD,
@@ -175,6 +181,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.granger_analyzer = granger_analyzer
     app.state.span_topology = span_topology
     app.state.feedback_store = feedback_store
+    app.state.service_registry = service_registry
 
     # ---- ClickHouse ---------------------------------------------------------
     clickhouse: ClickHouseStore | None = None

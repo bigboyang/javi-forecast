@@ -8,6 +8,7 @@ forecast loop are safe.
 
 import asyncio
 import logging
+import time
 from collections import defaultdict, deque
 from datetime import datetime, timezone
 from typing import Dict, Deque, List, Optional, Tuple
@@ -19,6 +20,8 @@ logger = logging.getLogger(__name__)
 
 # How many 1-minute buckets to keep per service (72 h worth by default).
 _DEFAULT_MAXLEN = 4320
+# Default maximum distinct services tracked before LRU eviction.
+_DEFAULT_MAX_SERVICES = 1000
 
 # Internal per-service accumulator bucket (1-minute resolution).
 _METRIC_NAMES = ("rate", "error_rate", "p50_ms", "p95_ms", "p99_ms")
@@ -74,8 +77,13 @@ class FeatureStore:
         Maximum number of RED metric data-points kept per service.
     """
 
-    def __init__(self, maxlen: int = _DEFAULT_MAXLEN) -> None:
+    def __init__(
+        self,
+        maxlen: int = _DEFAULT_MAXLEN,
+        max_services: int = _DEFAULT_MAX_SERVICES,
+    ) -> None:
         self.maxlen = maxlen
+        self._max_services = max_services
 
         # service → deque[(minute_ts, REDMetric)]
         self._series: Dict[str, Deque[Tuple[datetime, REDMetric]]] = defaultdict(
@@ -87,6 +95,8 @@ class FeatureStore:
         self._locks: Dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
         # service → set of ingested minute timestamps (for backfill dedup)
         self._ts_index: Dict[str, set] = defaultdict(set)
+        # service → last-access monotonic time (for LRU eviction)
+        self._lru: Dict[str, float] = {}
 
     # ------------------------------------------------------------------
     # Public write API
@@ -95,6 +105,7 @@ class FeatureStore:
     async def update(self, span: SpanEvent) -> None:
         """Incorporate a single span event into the feature store."""
         service = span.service_name
+        self._touch(service)
         async with self._locks[service]:
             span_ts = datetime.fromtimestamp(
                 span.start_time_nano / 1e9, tz=timezone.utc
@@ -118,6 +129,7 @@ class FeatureStore:
         when backfill and the Kafka consumer overlap in time.
         """
         service = metric.service_name
+        self._touch(service)
         async with self._locks[service]:
             minute_ts = _truncate_to_minute(metric.timestamp)
             if minute_ts in self._ts_index[service]:
@@ -188,6 +200,35 @@ class FeatureStore:
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    def _touch(self, service: str) -> None:
+        """Update LRU timestamp and evict the least-recently-used service
+        if ``_max_services`` is exceeded.
+
+        Called **before** acquiring per-service lock to avoid deadlocks.
+        """
+        now = time.monotonic()
+        is_new = service not in self._lru
+        self._lru[service] = now
+        if is_new and len(self._lru) > self._max_services:
+            self._evict_lru()
+
+    def _evict_lru(self) -> None:
+        """Remove the least-recently-used service from all internal structures."""
+        if not self._lru:
+            return
+        lru_service = min(self._lru, key=lambda s: self._lru[s])
+        logger.warning(
+            "FeatureStore cardinality limit reached (%d). "
+            "Evicting LRU service '%s'.",
+            self._max_services,
+            lru_service,
+        )
+        self._lru.pop(lru_service, None)
+        self._series.pop(lru_service, None)
+        self._buckets.pop(lru_service, None)
+        self._ts_index.pop(lru_service, None)
+        self._locks.pop(lru_service, None)
 
     def _flush_bucket(self, service: str, bucket: _Bucket) -> None:
         if bucket.count == 0:
