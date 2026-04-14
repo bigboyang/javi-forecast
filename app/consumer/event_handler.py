@@ -16,24 +16,6 @@ from ..models.span import SpanEvent
 
 logger = logging.getLogger(__name__)
 
-# Prometheus counter – imported lazily to avoid import-time side-effects
-_spans_counter = None
-
-
-def _get_counter():
-    global _spans_counter
-    if _spans_counter is None:
-        try:
-            from prometheus_client import Counter
-            _spans_counter = Counter(
-                "javi_forecast_spans_ingested_total",
-                "Total span events ingested",
-                ["service"],
-            )
-        except Exception:
-            pass
-    return _spans_counter
-
 
 class EventHandler:
     """Routes span events to the FeatureStore and topology tracker.
@@ -70,9 +52,6 @@ class EventHandler:
                 self._topology.record(span)
             if self._registry is not None:
                 self._registry.update_from_span(span)
-            counter = _get_counter()
-            if counter is not None:
-                counter.labels(service=span.service_name).inc()
             logger.debug(
                 "span ingested service=%s trace_id=%s duration_ms=%.2f is_error=%s",
                 span.service_name,

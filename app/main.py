@@ -62,15 +62,6 @@ from .store.forecast_store import ForecastStore
 # ---------------------------------------------------------------------------
 
 
-def _register_instance_metric(instance_id: str) -> None:
-    """Expose javi_forecast_instance_info gauge so dashboards can identify replicas."""
-    try:
-        from prometheus_client import Info
-        info = Info("javi_forecast_instance", "javi-forecast instance metadata")
-        info.info({"instance_id": instance_id})
-    except Exception:
-        pass
-
 # kafka 구독 추가, 메시지 처리 로직 추가
 
 logging.basicConfig(
@@ -97,8 +88,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             "Running multiple replicas will result in split-brain forecasts. "
             "Set REDIS_URL and INSTANCE_ID for HA deployments."
         )
-    _register_instance_metric(settings.INSTANCE_ID)
-
     # ---- Build shared components ----------------------------------------
     feature_store = FeatureStore(maxlen=4320, max_services=settings.MAX_FEATURE_STORE_SERVICES)  # 72 h at 1-min cadence
     jvm_feature_store = JvmFeatureStore(maxlen=4320)       # 72 h at 1-min cadence

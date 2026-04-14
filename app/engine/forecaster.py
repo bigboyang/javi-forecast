@@ -35,41 +35,6 @@ logger = logging.getLogger(__name__)
 
 _METRIC_NAMES = ("rate", "error_rate", "p50_ms", "p95_ms", "p99_ms")
 
-# Prometheus instruments (lazy-init)
-_run_hist = None
-_mse_gauge = None
-_anomaly_counter = None
-_store_gauge = None
-
-
-def _init_metrics():
-    global _run_hist, _mse_gauge, _anomaly_counter, _store_gauge
-    if _run_hist is not None:
-        return
-    try:
-        from prometheus_client import Histogram, Gauge, Counter
-        _run_hist = Histogram(
-            "javi_forecast_run_duration_seconds",
-            "Time spent running a forecast cycle",
-        )
-        _mse_gauge = Gauge(
-            "javi_forecast_model_mse",
-            "Forecast model MSE",
-            ["service", "metric", "model"],
-        )
-        _anomaly_counter = Counter(
-            "javi_forecast_anomalies_predicted_total",
-            "Total predicted anomalies",
-            ["service", "severity"],
-        )
-        _store_gauge = Gauge(
-            "javi_forecast_feature_store_size",
-            "Number of data points in the feature store",
-            ["service"],
-        )
-    except Exception:
-        pass
-
 
 class Forecaster:
     """Background forecast scheduler.
@@ -136,7 +101,6 @@ class Forecaster:
 
         self._task: Optional[asyncio.Task] = None
         self._running = False
-        _init_metrics()
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -195,8 +159,6 @@ class Forecaster:
             except Exception as exc:
                 logger.error("Forecast cycle error: %s", exc, exc_info=True)
             elapsed = time.monotonic() - t0
-            if _run_hist:
-                _run_hist.observe(elapsed)
             sleep_for = max(0.0, self.interval_seconds - elapsed)
             await asyncio.sleep(sleep_for)
 
@@ -220,13 +182,6 @@ class Forecaster:
                 return await coro
 
         await asyncio.gather(*[_bounded(t) for t in tasks], return_exceptions=True)
-
-        # Update feature-store size gauge
-        if _store_gauge:
-            for service in services:
-                _store_gauge.labels(service=service).set(
-                    self._feature_store.size(service)
-                )
 
         # Forecast custom OTel metrics from MetricFeatureStore
         if self._metric_feature_store is not None:
@@ -561,16 +516,7 @@ class Forecaster:
 
         await self._forecast_store.set(result)
 
-        if _mse_gauge and result.mse is not None:
-            _mse_gauge.labels(
-                service=service, metric=metric, model=model_type.value
-            ).set(result.mse)
-
         if is_anomaly and anomaly:
-            if _anomaly_counter:
-                _anomaly_counter.labels(
-                    service=service, severity=anomaly.severity
-                ).inc()
             await self._alerter.fire(anomaly)
             self._save_incident(anomaly)
 

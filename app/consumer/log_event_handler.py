@@ -14,23 +14,6 @@ from ..rag.log_store import LogStore
 
 logger = logging.getLogger(__name__)
 
-_logs_counter = None
-
-
-def _get_counter():
-    global _logs_counter
-    if _logs_counter is None:
-        try:
-            from prometheus_client import Counter
-            _logs_counter = Counter(
-                "javi_forecast_logs_ingested_total",
-                "Total OTel log records ingested",
-                ["service", "severity"],
-            )
-        except Exception:
-            pass
-    return _logs_counter
-
 
 class LogEventHandler:
     """Routes LogEvent to the LogStore.
@@ -64,12 +47,6 @@ class LogEventHandler:
                 trace_id=event.trace_id,
                 span_id=event.span_id,
             )
-            counter = _get_counter()
-            if counter is not None:
-                counter.labels(
-                    service=event.service_name,
-                    severity=event.severity,
-                ).inc()
             logger.debug(
                 "log ingested service=%s severity=%s body_len=%d",
                 event.service_name,

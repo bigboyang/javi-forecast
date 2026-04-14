@@ -47,40 +47,6 @@ _POLL_TIMEOUT_MS = 1000
 _MAX_BATCH_SIZE = 500
 _LAG_REPORT_INTERVAL_SECONDS = 30
 
-# Prometheus – lazy init
-_lag_gauge = None
-_messages_counter = None
-
-
-def _get_lag_gauge():
-    global _lag_gauge
-    if _lag_gauge is None:
-        try:
-            from prometheus_client import Gauge
-            _lag_gauge = Gauge(
-                "javi_forecast_kafka_consumer_lag",
-                "Kafka consumer lag (messages behind head) per topic-partition",
-                ["topic", "partition"],
-            )
-        except Exception:
-            pass
-    return _lag_gauge
-
-
-def _get_messages_counter():
-    global _messages_counter
-    if _messages_counter is None:
-        try:
-            from prometheus_client import Counter
-            _messages_counter = Counter(
-                "javi_forecast_kafka_messages_consumed_total",
-                "Total Kafka messages consumed per topic",
-                ["topic"],
-            )
-        except Exception:
-            pass
-    return _messages_counter
-
 
 class KafkaConsumerService:
     """Manages the aiokafka consumer lifecycle.
@@ -210,13 +176,10 @@ class KafkaConsumerService:
     # ------------------------------------------------------------------
 
     async def _lag_reporter_loop(self) -> None:
-        """Periodically fetch end offsets from broker and report consumer lag."""
+        """Periodically fetch end offsets from broker and log consumer lag."""
         while self._running:
             await asyncio.sleep(_LAG_REPORT_INTERVAL_SECONDS)
             if self._consumer is None:
-                continue
-            gauge = _get_lag_gauge()
-            if gauge is None:
                 continue
             try:
                 assignment = self._consumer.assignment()
@@ -227,7 +190,8 @@ class KafkaConsumerService:
                     try:
                         position = await self._consumer.position(tp)
                         lag = max(0, end_offset - position)
-                        gauge.labels(topic=tp.topic, partition=str(tp.partition)).set(lag)
+                        if lag > 0:
+                            logger.debug("Kafka lag topic=%s partition=%d lag=%d", tp.topic, tp.partition, lag)
                     except Exception:
                         pass
             except asyncio.CancelledError:
@@ -238,14 +202,11 @@ class KafkaConsumerService:
     async def _consume_loop(self) -> None:
         """Main polling loop – dispatches by topic."""
         assert self._consumer is not None
-        counter = _get_messages_counter()
         while self._running:
             try:
                 async for msg in self._consumer:
                     if not self._running:
                         break
-                    if counter is not None:
-                        counter.labels(topic=msg.topic).inc()
                     if msg.topic in self._log_topics:
                         await self._process_log_message(msg.value)
                     elif msg.topic in self._metric_topics:
