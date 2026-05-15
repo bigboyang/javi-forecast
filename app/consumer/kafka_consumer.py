@@ -34,9 +34,11 @@ import logging
 from typing import Optional, Set
 
 from ..config import settings
+from ..models.deployment import DeploymentEvent
 from ..models.log import LogEvent
 from ..models.metric import MetricEvent
 from ..models.span import SpanBatch, SpanEvent
+from .deploy_event_handler import DeployEventHandler
 from .event_handler import EventHandler
 from .log_event_handler import LogEventHandler
 from .metric_event_handler import MetricEventHandler
@@ -76,15 +78,18 @@ class KafkaConsumerService:
         event_handler: EventHandler,
         metric_handler: Optional[MetricEventHandler] = None,
         log_handler: Optional[LogEventHandler] = None,
+        deploy_handler: Optional[DeployEventHandler] = None,
         brokers: Optional[str] = None,
         topics: Optional[str] = None,
         metrics_topics: Optional[str] = None,
         log_topics: Optional[str] = None,
+        deploy_topics: Optional[str] = None,
         group_id: Optional[str] = None,
     ) -> None:
         self._handler = event_handler
         self._metric_handler = metric_handler
         self._log_handler = log_handler
+        self._deploy_handler = deploy_handler
         self._brokers = brokers or settings.KAFKA_BROKERS
 
         span_topics = [
@@ -102,16 +107,24 @@ class KafkaConsumerService:
             for t in (log_topics or settings.KAFKA_LOG_TOPICS).split(",")
             if t.strip()
         ]
+        deploy_topics_list = [
+            t.strip()
+            for t in (deploy_topics or settings.KAFKA_DEPLOY_TOPICS).split(",")
+            if t.strip()
+        ]
 
         self._span_topics: Set[str] = set(span_topics)
         self._metric_topics: Set[str] = set(metric_topics_list)
         self._log_topics: Set[str] = set(log_topics_list)
-        # deduplicate while preserving order: spans, then metrics, then logs
+        self._deploy_topics: Set[str] = set(deploy_topics_list)
+        # deduplicate while preserving order: spans, then metrics, then logs, then deploys
         seen: Set[str] = set(span_topics)
         extra_metrics = [t for t in metric_topics_list if t not in seen]
         seen.update(extra_metrics)
         extra_logs = [t for t in log_topics_list if t not in seen]
-        self._all_topics = span_topics + extra_metrics + extra_logs
+        seen.update(extra_logs)
+        extra_deploys = [t for t in deploy_topics_list if t not in seen]
+        self._all_topics = span_topics + extra_metrics + extra_logs + extra_deploys
 
         self._group_id = group_id or settings.KAFKA_GROUP_ID
         self._consumer = None
@@ -148,11 +161,12 @@ class KafkaConsumerService:
             self._lag_reporter_loop(), name="kafka-lag-reporter"
         )
         logger.info(
-            "Kafka consumer started brokers=%s span_topics=%s metric_topics=%s log_topics=%s group=%s",
+            "Kafka consumer started brokers=%s span_topics=%s metric_topics=%s log_topics=%s deploy_topics=%s group=%s",
             self._brokers,
             sorted(self._span_topics),
             sorted(self._metric_topics),
             sorted(self._log_topics),
+            sorted(self._deploy_topics),
             self._group_id,
         )
 
@@ -207,7 +221,9 @@ class KafkaConsumerService:
                 async for msg in self._consumer:
                     if not self._running:
                         break
-                    if msg.topic in self._log_topics:
+                    if msg.topic in self._deploy_topics:
+                        await self._process_deploy_message(msg.value)
+                    elif msg.topic in self._log_topics:
                         await self._process_log_message(msg.value)
                     elif msg.topic in self._metric_topics:
                         await self._process_metric_message(msg.value)
@@ -263,6 +279,26 @@ class KafkaConsumerService:
                 logger.warning("Unrecognised metric Kafka message shape: %s", type(data))
         except Exception as exc:
             logger.error("Failed to process metric Kafka message: %s", exc)
+
+    async def _process_deploy_message(self, raw: bytes) -> None:
+        """Deserialise and dispatch a single deployment Kafka message."""
+        if self._deploy_handler is None:
+            return
+
+        try:
+            data = json.loads(raw)
+        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+            logger.warning("Invalid deploy Kafka message (JSON decode error): %s", exc)
+            return
+
+        try:
+            if isinstance(data, dict):
+                event = DeploymentEvent.model_validate(data)
+                await self._deploy_handler.handle(event)
+            else:
+                logger.warning("Unrecognised deploy Kafka message shape: %s", type(data))
+        except Exception as exc:
+            logger.error("Failed to process deploy Kafka message: %s", exc)
 
     async def _process_log_message(self, raw: bytes) -> None:
         """Deserialise and dispatch a single log Kafka message."""

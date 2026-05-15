@@ -46,7 +46,7 @@ spec:
             - sh
             - -c
             - |
-              until nc -z clickhouse-svc 9000; do
+              until nc -z clickhouse-svc 8123; do
                 echo "Waiting for ClickHouse..."; sleep 3
               done
               echo "ClickHouse is up"
@@ -63,12 +63,16 @@ spec:
               value: "8080"
             - name: LOG_LEVEL
               value: "info"
+            - name: INSTANCE_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
 
-            # ClickHouse
+            # ClickHouse — clickhouse-connect는 HTTP(8123) 사용
             - name: CLICKHOUSE_HOST
               value: "clickhouse-svc"
             - name: CLICKHOUSE_PORT
-              value: "9000"
+              value: "8123"
             - name: CLICKHOUSE_DB
               value: "apm"
             - name: CLICKHOUSE_USER
@@ -82,6 +86,14 @@ spec:
                   name: clickhouse-secret
                   key: password
 
+            # Redis (HA 멀티 레플리카 FeatureStore 공유)
+            - name: REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: forecast-secret
+                  key: redis_url
+                  optional: true
+
             # Kafka
             - name: KAFKA_ENABLED
               valueFrom:
@@ -93,8 +105,26 @@ spec:
                 configMapKeyRef:
                   name: forecast-config
                   key: kafka_brokers
-            - name: KAFKA_TOPIC
-              value: "spans.error"
+            - name: KAFKA_TOPICS
+              valueFrom:
+                configMapKeyRef:
+                  name: forecast-config
+                  key: kafka_topics
+            - name: KAFKA_METRICS_TOPICS
+              valueFrom:
+                configMapKeyRef:
+                  name: forecast-config
+                  key: kafka_metrics_topics
+            - name: KAFKA_LOG_TOPICS
+              valueFrom:
+                configMapKeyRef:
+                  name: forecast-config
+                  key: kafka_log_topics
+            - name: KAFKA_DEPLOY_TOPICS
+              valueFrom:
+                configMapKeyRef:
+                  name: forecast-config
+                  key: kafka_deploy_topics
             - name: KAFKA_GROUP_ID
               value: "javi-forecast"
 
@@ -104,7 +134,7 @@ spec:
             - name: FORECAST_INTERVAL_SECONDS
               value: "60"
             - name: FEATURE_WINDOW_MINUTES
-              value: "60"
+              value: "1440"
             - name: MIN_DATA_POINTS
               value: "10"
             - name: DEFAULT_MODEL
@@ -132,6 +162,42 @@ spec:
                   key: slack_webhook_url
                   optional: true
 
+            # BaselineComputer (collector에서 이식)
+            - name: BASELINE_ENABLED
+              value: "true"
+            - name: BASELINE_INTERVAL_HOURS
+              value: "1"
+
+            # AnomalyDetector (collector에서 이식)
+            - name: ANOMALY_ENABLED
+              value: "true"
+            - name: ANOMALY_INTERVAL_SECONDS
+              value: "60"
+            - name: ANOMALY_TRAIN_INTERVAL_HOURS
+              value: "6"
+            - name: ANOMALY_Z_WARN
+              value: "2.0"
+            - name: ANOMALY_Z_CRITICAL
+              value: "3.0"
+            - name: ANOMALY_IF_THRESHOLD
+              value: "0.65"
+            - name: ANOMALY_SUPPRESSION_MINUTES
+              value: "10"
+
+            # RCAEngine (collector에서 이식)
+            - name: RCA_ENABLED
+              value: "true"
+            - name: RCA_INTERVAL_SECONDS
+              value: "120"
+
+            # LLM / RAG (선택)
+            - name: ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: forecast-secret
+                  key: anthropic_api_key
+                  optional: true
+
           readinessProbe:
             httpGet:
               path: /readyz
@@ -150,11 +216,11 @@ spec:
 
           resources:
             requests:
-              cpu: "200m"
-              memory: "256Mi"
-            limits:
-              cpu: "500m"
+              cpu: "300m"
               memory: "512Mi"
+            limits:
+              cpu: "1000m"
+              memory: "1Gi"
 
       terminationGracePeriodSeconds: 30
 ---
@@ -166,4 +232,8 @@ metadata:
 data:
   kafka_enabled: "true"
   kafka_brokers: "kafka-svc:9092"
+  kafka_topics: "spans.all"
+  kafka_metrics_topics: "metrics"
+  kafka_log_topics: "logs"
+  kafka_deploy_topics: "deploys"
   alert_webhook_url: ""

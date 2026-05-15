@@ -155,3 +155,66 @@ class WebhookAlerter:
             f"*Time until anomaly:* `{prediction.seconds_until_anomaly:.0f}s`"
         )
         return {"text": text}
+
+    # ------------------------------------------------------------------
+    # Real-time anomaly alerts (from AnomalyDetector, not Forecaster)
+    # ------------------------------------------------------------------
+
+    async def fire_anomaly(self, anomaly: dict) -> None:
+        """Fire alerts for a *current* anomaly detected by AnomalyDetector.
+
+        Parameters
+        ----------
+        anomaly:
+            dict with keys: service_name, span_name, anomaly_type,
+            current_value, baseline_value, z_score, severity, minute
+        """
+        svc = anomaly.get("service_name", "")
+        atype = anomaly.get("anomaly_type", "anomaly")
+        key = (svc, atype)
+
+        async with self._lock:
+            last = self._last_fired.get(key)
+            now = datetime.now(tz=timezone.utc)
+            if last is not None and (now - last).total_seconds() < self.cooldown_seconds:
+                return
+            self._last_fired[key] = now
+
+        payload = {
+            "service_name": svc,
+            "span_name": anomaly.get("span_name", ""),
+            "anomaly_type": atype,
+            "severity": anomaly.get("severity", "warning"),
+            "current_value": anomaly.get("current_value", 0),
+            "baseline_value": anomaly.get("baseline_value", 0),
+            "z_score": round(float(anomaly.get("z_score", 0)), 3),
+            "minute": anomaly.get("minute", now).isoformat()
+            if hasattr(anomaly.get("minute"), "isoformat")
+            else str(anomaly.get("minute", "")),
+            "source": "javi-forecast/anomaly-detector",
+        }
+        tasks = []
+        if settings.ALERT_WEBHOOK_URL:
+            tasks.append(self._post(settings.ALERT_WEBHOOK_URL, payload, label="generic"))
+        if settings.ALERT_SLACK_WEBHOOK_URL:
+            sev = anomaly.get("severity", "warning")
+            icon = ":rotating_light:" if sev == "critical" else ":warning:"
+            slack_payload = {
+                "text": (
+                    f"{icon} *[javi-forecast] 이상 탐지*\n"
+                    f"*Service:* `{svc}` / `{anomaly.get('span_name', '')}`\n"
+                    f"*Type:* `{atype}`  *Severity:* `{sev.upper()}`\n"
+                    f"*Current:* `{payload['current_value']:.3f}`  "
+                    f"*Baseline:* `{payload['baseline_value']:.3f}`  "
+                    f"*Z:* `{payload['z_score']}`"
+                )
+            }
+            tasks.append(
+                self._post(settings.ALERT_SLACK_WEBHOOK_URL, slack_payload, label="slack")
+            )
+
+        if tasks:
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            for r in results:
+                if isinstance(r, Exception):
+                    logger.error("anomaly alert delivery error: %s", r)

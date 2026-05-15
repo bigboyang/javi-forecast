@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     KAFKA_TOPICS: str = "spans.all"         # comma-separated span topics; spans.all = accurate RED metrics
     KAFKA_METRICS_TOPICS: str = "metrics"   # comma-separated OTel metric topics from javi-collector
     KAFKA_LOG_TOPICS: str = "logs"          # comma-separated OTel log topics from javi-collector
+    KAFKA_DEPLOY_TOPICS: str = "deploys"    # comma-separated deploy event topics from javi-collector
     KAFKA_GROUP_ID: str = "javi-forecast"
 
     # Forecasting
@@ -90,6 +91,23 @@ class Settings(BaseSettings):
     # Multi-instance / HA
     INSTANCE_ID: str = "default"           # unique ID per replica; used in log/metric labels
     REDIS_URL: Optional[str] = None        # e.g. redis://localhost:6379 – set for multi-instance FeatureStore sharing (not yet implemented)
+
+    # Baseline computer (ported from collector)
+    BASELINE_ENABLED: bool = True
+    BASELINE_INTERVAL_HOURS: int = 1       # how often to recompute red_baseline from spans
+
+    # ClickHouse-based anomaly detector (ported from collector)
+    ANOMALY_ENABLED: bool = True
+    ANOMALY_INTERVAL_SECONDS: int = 60     # detection cycle (matches mv_red_1m_state cadence)
+    ANOMALY_TRAIN_INTERVAL_HOURS: int = 6  # IsolationForest retrain interval
+    ANOMALY_Z_WARN: float = 2.0
+    ANOMALY_Z_CRITICAL: float = 3.0
+    ANOMALY_IF_THRESHOLD: float = 0.65     # IsolationForest anomaly score threshold
+    ANOMALY_SUPPRESSION_MINUTES: int = 10  # suppress duplicate (service, span, type) alerts
+
+    # RCA engine (ported from collector)
+    RCA_ENABLED: bool = True
+    RCA_INTERVAL_SECONDS: int = 120        # polling interval for new anomalies
 
     class Config:
         env_file = ".env"

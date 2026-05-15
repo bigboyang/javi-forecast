@@ -34,12 +34,14 @@ from .api.health import set_dependencies, mark_ready
 from .anomaly.predictor import AnomalyPredictor
 from .alerter.webhook import WebhookAlerter
 from .config import settings
+from .consumer.deploy_event_handler import DeployEventHandler
 from .consumer.event_handler import EventHandler
 from .consumer.kafka_consumer import KafkaConsumerService
 from .consumer.log_event_handler import LogEventHandler
 from .consumer.metric_event_handler import MetricEventHandler
 from .engine.burn_rate_analyzer import BurnRateAnalyzer
 from .engine.dependency_map import DependencyMap
+from .engine.deployment_store import DeploymentStore
 from .engine.feature_store import FeatureStore
 from .engine.service_registry import ServiceRegistry
 from .engine.feedback_store import FeedbackStore as AlertFeedbackStore
@@ -50,6 +52,9 @@ from .engine.jvm_feature_store import JvmFeatureStore
 from .engine.metric_feature_store import MetricFeatureStore
 from .engine.span_topology import SpanTopologyTracker
 from .engine.var_forecaster import VarForecaster
+from .engine.baseline_computer import BaselineComputer
+from .engine.anomaly_detector import AnomalyDetector
+from .engine.rca_engine import RCAEngine
 from .store.clickhouse import ClickHouseStore
 from .store.forecast_store import ForecastStore
 
@@ -96,6 +101,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     span_topology = SpanTopologyTracker()
     feedback_store = AlertFeedbackStore(ttl_seconds=7 * 86400)
     service_registry = ServiceRegistry()
+    deployment_store = DeploymentStore()
+    deploy_event_handler = DeployEventHandler(deployment_store)
     event_handler = EventHandler(
         feature_store,
         topology_tracker=span_topology,
@@ -159,6 +166,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.feature_store = feature_store
     app.state.jvm_feature_store = jvm_feature_store
     app.state.metric_feature_store = metric_feature_store
+    app.state.deployment_store = deployment_store
+    app.state.deploy_event_handler = deploy_event_handler
     app.state.forecast_store = forecast_store
     app.state.event_handler = event_handler
     app.state.metric_event_handler = metric_event_handler
@@ -210,6 +219,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             event_handler=event_handler,
             metric_handler=metric_event_handler,
             log_handler=log_event_handler,
+            deploy_handler=deploy_event_handler,
         )
         try:
             await kafka.start()
@@ -220,6 +230,27 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         logger.info("Kafka consumer disabled (KAFKA_ENABLED=false)")
 
     app.state.kafka = kafka
+
+    # ---- Baseline Computer (ported from collector) --------------------------
+    baseline_computer: BaselineComputer | None = None
+    if clickhouse is not None and settings.BASELINE_ENABLED:
+        baseline_computer = BaselineComputer(
+            clickhouse=clickhouse,
+            interval_hours=settings.BASELINE_INTERVAL_HOURS,
+        )
+        await baseline_computer.start()
+
+    # ---- Anomaly Detector (ported from collector) ---------------------------
+    anomaly_detector: AnomalyDetector | None = None
+    if clickhouse is not None and settings.ANOMALY_ENABLED:
+        anomaly_detector = AnomalyDetector(clickhouse=clickhouse, alerter=alerter)
+        await anomaly_detector.start()
+
+    # ---- RCA Engine (ported from collector) ---------------------------------
+    rca_engine: RCAEngine | None = None
+    if clickhouse is not None and settings.RCA_ENABLED:
+        rca_engine = RCAEngine(clickhouse=clickhouse)
+        await rca_engine.start()
 
     # ---- JVM Analyzer -------------------------------------------------------
     await jvm_analyzer.start()
@@ -257,6 +288,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await forecaster.stop()
     await jvm_analyzer.stop()
     await burn_rate_analyzer.stop()
+    if rca_engine is not None:
+        await rca_engine.stop()
+    if anomaly_detector is not None:
+        await anomaly_detector.stop()
+    if baseline_computer is not None:
+        await baseline_computer.stop()
     if settings.VAR_ENABLED:
         await var_forecaster.stop()
     if settings.GRANGER_ENABLED:
