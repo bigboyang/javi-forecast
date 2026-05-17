@@ -52,6 +52,9 @@ from .engine.jvm_feature_store import JvmFeatureStore
 from .engine.metric_feature_store import MetricFeatureStore
 from .engine.span_topology import SpanTopologyTracker
 from .engine.var_forecaster import VarForecaster
+from .engine.accuracy_tracker import AccuracyTracker
+from .engine.alert_store import AlertStore
+from .engine.anomaly_clusterer import AnomalyClusterer
 from .engine.baseline_computer import BaselineComputer
 from .engine.anomaly_detector import AnomalyDetector
 from .engine.rca_engine import RCAEngine
@@ -100,6 +103,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     forecast_store = ForecastStore(ttl_seconds=3600)
     span_topology = SpanTopologyTracker()
     feedback_store = AlertFeedbackStore(ttl_seconds=7 * 86400)
+    alert_store = AlertStore(ttl_hours=24)
+    anomaly_clusterer = AnomalyClusterer(window_seconds=300)
+    accuracy_tracker = AccuracyTracker(maxlen=500)
     service_registry = ServiceRegistry()
     deployment_store = DeploymentStore()
     deploy_event_handler = DeployEventHandler(deployment_store)
@@ -160,6 +166,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         alerter=alerter,
         metric_feature_store=metric_feature_store,
         incident_store=incident_store,
+        accuracy_tracker=accuracy_tracker,
     )
 
     # Expose shared state via app.state for dependency injection
@@ -180,6 +187,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.span_topology = span_topology
     app.state.feedback_store = feedback_store
     app.state.service_registry = service_registry
+    app.state.alert_store = alert_store
+    app.state.anomaly_clusterer = anomaly_clusterer
+    app.state.accuracy_tracker = accuracy_tracker
 
     # ---- ClickHouse ---------------------------------------------------------
     clickhouse: ClickHouseStore | None = None
@@ -243,13 +253,18 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # ---- Anomaly Detector (ported from collector) ---------------------------
     anomaly_detector: AnomalyDetector | None = None
     if clickhouse is not None and settings.ANOMALY_ENABLED:
-        anomaly_detector = AnomalyDetector(clickhouse=clickhouse, alerter=alerter)
+        anomaly_detector = AnomalyDetector(
+            clickhouse=clickhouse,
+            alerter=alerter,
+            alert_store=alert_store,
+            anomaly_clusterer=anomaly_clusterer,
+        )
         await anomaly_detector.start()
 
     # ---- RCA Engine (ported from collector) ---------------------------------
     rca_engine: RCAEngine | None = None
     if clickhouse is not None and settings.RCA_ENABLED:
-        rca_engine = RCAEngine(clickhouse=clickhouse)
+        rca_engine = RCAEngine(clickhouse=clickhouse, incident_store=incident_store)
         await rca_engine.start()
 
     # ---- JVM Analyzer -------------------------------------------------------
@@ -274,7 +289,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await forecaster.start()
 
     # ---- Mark ready ---------------------------------------------------------
-    set_dependencies(clickhouse, feature_store, ready=True)
+    set_dependencies(
+        clickhouse,
+        feature_store,
+        ready=True,
+        kafka_service=kafka,
+        forecaster=forecaster,
+        anomaly_detector=anomaly_detector,
+    )
     mark_ready(True)
     logger.info("javi-forecast ready on port %d", settings.HTTP_PORT)
 

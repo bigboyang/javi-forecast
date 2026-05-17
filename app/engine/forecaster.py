@@ -26,10 +26,12 @@ from .baseline_store import BaselineStore
 from .feature_store import FeatureStore
 from .metric_feature_store import MetricFeatureStore
 from .selector import select_model
+from .prom_metrics import forecast_cycles, forecast_cycle_duration, feature_store_services
 from ..store.forecast_store import ForecastStore
 
 if TYPE_CHECKING:
     from ..rag.incident_store import IncidentStore
+    from .accuracy_tracker import AccuracyTracker
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +71,7 @@ class Forecaster:
         alerter: WebhookAlerter,
         metric_feature_store: Optional[MetricFeatureStore] = None,
         incident_store: Optional["IncidentStore"] = None,
+        accuracy_tracker: Optional["AccuracyTracker"] = None,
         interval_seconds: int = settings.FORECAST_INTERVAL_SECONDS,
         horizon_minutes: int = settings.FORECAST_HORIZON_MINUTES,
         window_minutes: int = settings.FEATURE_WINDOW_MINUTES,
@@ -78,6 +81,7 @@ class Forecaster:
         self._feature_store = feature_store
         self._metric_feature_store = metric_feature_store
         self._forecast_store = forecast_store
+        self._accuracy_tracker = accuracy_tracker
         self._predictor = anomaly_predictor
         self._alerter = alerter
         self._incident_store = incident_store
@@ -156,9 +160,13 @@ class Forecaster:
             t0 = time.monotonic()
             try:
                 await self._run_cycle()
+                forecast_cycles.labels(status="ok").inc()
             except Exception as exc:
                 logger.error("Forecast cycle error: %s", exc, exc_info=True)
+                forecast_cycles.labels(status="error").inc()
             elapsed = time.monotonic() - t0
+            forecast_cycle_duration.observe(elapsed)
+            feature_store_services.set(len(self._feature_store.get_services()))
             sleep_for = max(0.0, self.interval_seconds - elapsed)
             await asyncio.sleep(sleep_for)
 
@@ -519,6 +527,17 @@ class Forecaster:
         if is_anomaly and anomaly:
             await self._alerter.fire(anomaly)
             self._save_incident(anomaly)
+
+        # Accuracy tracking: record the 1-min-ahead prediction and evaluate past actuals
+        if self._accuracy_tracker is not None:
+            await self._accuracy_tracker.record_prediction(
+                service, metric,
+                predicted_for=future_ts[0],
+                predicted_value=float(predicted[0]),
+            )
+            for pt in points:
+                actual_ts = pt.timestamp if pt.timestamp.tzinfo else pt.timestamp.replace(tzinfo=timezone.utc)
+                await self._accuracy_tracker.record_actual(service, metric, actual_ts, pt.value)
 
         logger.debug(
             "Forecast stored service=%s metric=%s model=%s mse=%s anomaly=%s",

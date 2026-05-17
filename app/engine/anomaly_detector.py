@@ -26,6 +26,7 @@ from typing import Optional
 import numpy as np
 
 from ..config import settings
+from .prom_metrics import anomalies_detected, anomalies_suppressed, alerts_fired, alerts_active
 
 logger = logging.getLogger(__name__)
 
@@ -53,9 +54,11 @@ class AnomalyDetector:
         WebhookAlerter to fire when anomalies are detected.
     """
 
-    def __init__(self, clickhouse, alerter=None) -> None:
+    def __init__(self, clickhouse, alerter=None, alert_store=None, anomaly_clusterer=None) -> None:
         self._ch = clickhouse
         self._alerter = alerter
+        self._alert_store = alert_store
+        self._clusterer = anomaly_clusterer
         self._iforest: Optional[_IForestState] = None
         self._suppressed: dict[str, datetime] = {}  # key → suppress_until
         self._task: Optional[asyncio.Task] = None
@@ -274,20 +277,39 @@ class AnomalyDetector:
         if not to_insert:
             return
 
+        suppressed_count = len(detected) - len(to_insert)
+        if suppressed_count:
+            anomalies_suppressed.inc(suppressed_count)
+
         try:
             await self._ch.insert_anomalies(to_insert)
             logger.info(
                 "anomaly: recorded=%d suppressed=%d",
-                len(to_insert), len(detected) - len(to_insert),
+                len(to_insert), suppressed_count,
             )
         except Exception as exc:
             logger.error("anomaly: insert failed: %s", exc)
             return
 
-        # Fire alerts for each new anomaly
+        # Prometheus counters + alert lifecycle + clustering
+        for a in to_insert:
+            anomalies_detected.labels(
+                anomaly_type=a["anomaly_type"], severity=a["severity"]
+            ).inc()
+
         if self._alerter:
             for a in to_insert:
                 await self._alerter.fire_anomaly(a)
+                alerts_fired.labels(severity=a["severity"]).inc()
+
+        if self._alert_store is not None:
+            for a in to_insert:
+                await self._alert_store.create_alert(a)
+            alerts_active.set(self._alert_store.count_firing())
+
+        if self._clusterer is not None:
+            for a in to_insert:
+                await self._clusterer.ingest(a)
 
     # ------------------------------------------------------------------
     # Helpers

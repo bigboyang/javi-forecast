@@ -13,6 +13,8 @@ from .topology import router as topology_router
 from .feedback import router as feedback_router
 from .registry import router as registry_router
 from .events import router as events_router
+from .alerts import router as alerts_router
+from .prom import router as prom_router
 
 api_router = APIRouter()
 
@@ -27,3 +29,5 @@ api_router.include_router(topology_router)
 api_router.include_router(feedback_router)
 api_router.include_router(registry_router)
 api_router.include_router(events_router)
+api_router.include_router(alerts_router)
+api_router.include_router(prom_router)

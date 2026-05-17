@@ -34,6 +34,7 @@ import logging
 from typing import Optional, Set
 
 from ..config import settings
+from ..engine.prom_metrics import kafka_message_errors, kafka_messages_processed
 from ..models.deployment import DeploymentEvent
 from ..models.log import LogEvent
 from ..models.metric import MetricEvent
@@ -146,8 +147,7 @@ class KafkaConsumerService:
             group_id=self._group_id,
             value_deserializer=lambda v: v,   # raw bytes, parse below
             auto_offset_reset="latest",
-            enable_auto_commit=True,
-            auto_commit_interval_ms=5000,
+            enable_auto_commit=False,          # manual commit after each dispatch
             max_poll_records=_MAX_BATCH_SIZE,
             session_timeout_ms=30000,
             heartbeat_interval_ms=3000,
@@ -214,7 +214,7 @@ class KafkaConsumerService:
                 logger.debug("Lag report failed: %s", exc)
 
     async def _consume_loop(self) -> None:
-        """Main polling loop – dispatches by topic."""
+        """Main polling loop – dispatches by topic then commits offset."""
         assert self._consumer is not None
         while self._running:
             try:
@@ -222,13 +222,24 @@ class KafkaConsumerService:
                     if not self._running:
                         break
                     if msg.topic in self._deploy_topics:
+                        topic_type = "deploy"
                         await self._process_deploy_message(msg.value)
                     elif msg.topic in self._log_topics:
+                        topic_type = "log"
                         await self._process_log_message(msg.value)
                     elif msg.topic in self._metric_topics:
+                        topic_type = "metric"
                         await self._process_metric_message(msg.value)
                     else:
+                        topic_type = "span"
                         await self._process_span_message(msg.value)
+                    kafka_messages_processed.labels(topic_type=topic_type).inc()
+                    # Commit offset only after successful dispatch (at-least-once).
+                    # Malformed messages are still committed so we skip poison pills.
+                    try:
+                        await self._consumer.commit()
+                    except Exception as commit_exc:
+                        logger.warning("Kafka commit failed: %s", commit_exc)
             except asyncio.CancelledError:
                 break
             except Exception as exc:
@@ -241,6 +252,7 @@ class KafkaConsumerService:
             data = json.loads(raw)
         except (json.JSONDecodeError, UnicodeDecodeError) as exc:
             logger.warning("Invalid span Kafka message (JSON decode error): %s", exc)
+            kafka_message_errors.labels(topic_type="span").inc()
             return
 
         try:
