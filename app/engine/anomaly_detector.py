@@ -141,7 +141,7 @@ class AnomalyDetector:
             logger.warning("scikit-learn not available – IForest disabled")
             return
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         clf = await loop.run_in_executor(
             None,
             lambda: IsolationForest(

@@ -33,6 +33,7 @@ class MetricEvent(BaseModel):
     metric_type values: GAUGE | SUM | HISTOGRAM
     """
 
+    schema_version: Optional[str] = None
     service_name: str
     metric_name: str
     metric_type: str

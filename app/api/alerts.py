@@ -97,7 +97,15 @@ async def list_alerts(
     service_name: Optional[str] = Query(None),
 ) -> List[AlertResponse]:
     store = _get_alert_store(request)
-    alert_state = AlertState(state) if state else None
+    alert_state: Optional[AlertState] = None
+    if state:
+        try:
+            alert_state = AlertState(state)
+        except ValueError:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid state '{state}'. Must be one of: FIRING, ACKNOWLEDGED, RESOLVED",
+            )
     records = await store.list_alerts(state=alert_state, service_name=service_name)
     return [_fmt(r) for r in records]
 

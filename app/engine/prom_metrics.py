@@ -60,6 +60,13 @@ feature_store_evictions = Counter(
     "LRU evictions triggered by MAX_FEATURE_STORE_SERVICES limit",
 )
 
+# Kafka consumer lag
+kafka_consumer_lag = Gauge(
+    "javi_kafka_consumer_lag",
+    "Kafka consumer lag (messages behind end offset) per topic/partition",
+    ["topic", "partition"],
+)
+
 # Alert lifecycle
 alerts_fired = Counter(
     "javi_alerts_fired_total",

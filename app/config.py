@@ -74,11 +74,11 @@ class Settings(BaseSettings):
 
     # RAG / Incident store (Phase 2)
     INCIDENT_RAG_ENABLED: bool = False     # enable Incident RAG (requires RAG_ENABLED=true)
-    INCIDENT_STORE_PATH: str = "/tmp/javi_incidents"  # ChromaDB persist directory
+    INCIDENT_STORE_PATH: str = "/data/javi_incidents"  # ChromaDB persist directory (mount a PVC here in K8s)
 
     # RAG / Log store (Phase 3)
     LOG_RAG_ENABLED: bool = False          # enable Log RAG (requires RAG_ENABLED=true)
-    LOG_STORE_PATH: str = "/tmp/javi_logs"  # ChromaDB persist directory for logs
+    LOG_STORE_PATH: str = "/data/javi_logs"  # ChromaDB persist directory for logs (mount a PVC here in K8s)
 
     # P2-B: STL anomaly detection
     STL_ENABLED: bool = True
@@ -88,9 +88,12 @@ class Settings(BaseSettings):
     # P2-C: FeatureStore cardinality limiting
     MAX_FEATURE_STORE_SERVICES: int = 1000  # max services before LRU eviction
 
+    # CORS
+    CORS_ALLOWED_ORIGINS: str = "*"        # comma-separated origins; "*" allows all (dev only)
+
     # Multi-instance / HA
     INSTANCE_ID: str = "default"           # unique ID per replica; used in log/metric labels
-    REDIS_URL: Optional[str] = None        # e.g. redis://localhost:6379 – set for multi-instance FeatureStore sharing (not yet implemented)
+    REDIS_URL: Optional[str] = None        # e.g. redis://localhost:6379 – set for multi-instance FeatureStore sharing
 
     # Baseline computer (ported from collector)
     BASELINE_ENABLED: bool = True

@@ -34,7 +34,7 @@ import logging
 from typing import Optional, Set
 
 from ..config import settings
-from ..engine.prom_metrics import kafka_message_errors, kafka_messages_processed
+from ..engine.prom_metrics import kafka_consumer_lag, kafka_message_errors, kafka_messages_processed
 from ..models.deployment import DeploymentEvent
 from ..models.log import LogEvent
 from ..models.metric import MetricEvent
@@ -49,6 +49,20 @@ logger = logging.getLogger(__name__)
 _POLL_TIMEOUT_MS = 1000
 _MAX_BATCH_SIZE = 500
 _LAG_REPORT_INTERVAL_SECONDS = 30
+_SUPPORTED_SCHEMA_VERSION = "1"
+
+
+def _check_schema_version(data: dict, topic_type: str) -> None:
+    """Log a warning if the message carries an unrecognised schema version."""
+    version = data.get("schema_version")
+    if version is not None and version != _SUPPORTED_SCHEMA_VERSION:
+        logger.warning(
+            "Unsupported schema_version=%s topic_type=%s — expected %s. "
+            "Rolling upgrade in progress or schema mismatch.",
+            version,
+            topic_type,
+            _SUPPORTED_SCHEMA_VERSION,
+        )
 
 
 class KafkaConsumerService:
@@ -204,6 +218,9 @@ class KafkaConsumerService:
                     try:
                         position = await self._consumer.position(tp)
                         lag = max(0, end_offset - position)
+                        kafka_consumer_lag.labels(
+                            topic=tp.topic, partition=str(tp.partition)
+                        ).set(lag)
                         if lag > 0:
                             logger.debug("Kafka lag topic=%s partition=%d lag=%d", tp.topic, tp.partition, lag)
                     except Exception:
@@ -257,14 +274,18 @@ class KafkaConsumerService:
 
         try:
             if isinstance(data, dict) and "spans" in data:
+                _check_schema_version(data, "span")
                 batch = SpanBatch.model_validate(data)
                 for span in batch.spans:
                     await self._handler.handle(span)
             elif isinstance(data, dict):
+                _check_schema_version(data, "span")
                 span = SpanEvent.model_validate(data)
                 await self._handler.handle(span)
             elif isinstance(data, list):
                 for item in data:
+                    if isinstance(item, dict):
+                        _check_schema_version(item, "span")
                     span = SpanEvent.model_validate(item)
                     await self._handler.handle(span)
             else:
@@ -285,6 +306,7 @@ class KafkaConsumerService:
 
         try:
             if isinstance(data, dict):
+                _check_schema_version(data, "metric")
                 event = MetricEvent.model_validate(data)
                 await self._metric_handler.handle(event)
             else:
@@ -305,6 +327,7 @@ class KafkaConsumerService:
 
         try:
             if isinstance(data, dict):
+                _check_schema_version(data, "deploy")
                 event = DeploymentEvent.model_validate(data)
                 await self._deploy_handler.handle(event)
             else:
@@ -325,10 +348,13 @@ class KafkaConsumerService:
 
         try:
             if isinstance(data, dict):
+                _check_schema_version(data, "log")
                 event = LogEvent.model_validate(data)
                 await self._log_handler.handle(event)
             elif isinstance(data, list):
                 for item in data:
+                    if isinstance(item, dict):
+                        _check_schema_version(item, "log")
                     event = LogEvent.model_validate(item)
                     await self._log_handler.handle(event)
             else:
