@@ -8,7 +8,6 @@ GET /dependency/{service}/causes   — root-cause analysis for a service
 from __future__ import annotations
 
 from datetime import datetime
-from typing import List
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
@@ -26,12 +25,12 @@ class EdgeResponse(BaseModel):
 
 class RootCauseResponse(BaseModel):
     service: str
-    root_causes: List[str]
-    upstream_edges: List[EdgeResponse]
+    root_causes: list[str]
+    upstream_edges: list[EdgeResponse]
 
 
-@router.get("/graph", response_model=List[EdgeResponse], summary="All causal dependency edges")
-async def get_dependency_graph(request: Request) -> List[EdgeResponse]:
+@router.get("/graph", response_model=list[EdgeResponse], summary="All causal dependency edges")
+async def get_dependency_graph(request: Request) -> list[EdgeResponse]:
     """Return all Granger-causality edges currently in the dependency map."""
     dep_map = getattr(request.app.state, "dependency_map", None)
     if dep_map is None:

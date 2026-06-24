@@ -1,6 +1,7 @@
-from pydantic import BaseModel
-from typing import Any, Dict, List, Optional
 from datetime import datetime
+from typing import Any
+
+from pydantic import BaseModel
 
 
 class MetricPoint(BaseModel):
@@ -21,7 +22,7 @@ class REDMetric(BaseModel):
 class TimeSeriesData(BaseModel):
     service_name: str
     metric_name: str      # rate | error_rate | p50_ms | p95_ms | p99_ms
-    points: List[MetricPoint]
+    points: list[MetricPoint]
 
 
 class MetricEvent(BaseModel):
@@ -33,17 +34,17 @@ class MetricEvent(BaseModel):
     metric_type values: GAUGE | SUM | HISTOGRAM
     """
 
-    schema_version: Optional[str] = None
+    schema_version: str | None = None
     service_name: str
     metric_name: str
     metric_type: str
-    unit: Optional[str] = ""
+    unit: str | None = ""
     value: float
     timestamp_ms: int                       # epoch milliseconds
-    attributes: Optional[Dict[str, Any]] = {}
+    attributes: dict[str, Any] | None = {}
 
 
 class MetricEventBatch(BaseModel):
     """Batch wrapper used by the HTTP ingest endpoint."""
 
-    metrics: List[MetricEvent]
+    metrics: list[MetricEvent]

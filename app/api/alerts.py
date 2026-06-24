@@ -12,8 +12,6 @@ POST /api/alerts/incidents/{id}/close   – close an incident manually
 """
 from __future__ import annotations
 
-from typing import List, Optional
-
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel
 
@@ -52,16 +50,16 @@ class AlertResponse(BaseModel):
     z_score: float
     state: str
     fired_at: str
-    acked_at: Optional[str] = None
-    resolved_at: Optional[str] = None
-    ack_by: Optional[str] = None
+    acked_at: str | None = None
+    resolved_at: str | None = None
+    ack_by: str | None = None
 
 
 class IncidentResponse(BaseModel):
     incident_id: str
     service_name: str
-    anomaly_ids: List[str]
-    anomaly_types: List[str]
+    anomaly_ids: list[str]
+    anomaly_types: list[str]
     severity: str
     started_at: str
     last_seen_at: str
@@ -90,14 +88,14 @@ def _fmt(rec: AlertRecord) -> AlertResponse:
 # Alert endpoints
 # ---------------------------------------------------------------------------
 
-@router.get("", response_model=List[AlertResponse], summary="List alerts")
+@router.get("", response_model=list[AlertResponse], summary="List alerts")
 async def list_alerts(
     request: Request,
-    state: Optional[str] = Query(None, description="FIRING | ACKNOWLEDGED | RESOLVED"),
-    service_name: Optional[str] = Query(None),
-) -> List[AlertResponse]:
+    state: str | None = Query(None, description="FIRING | ACKNOWLEDGED | RESOLVED"),
+    service_name: str | None = Query(None),
+) -> list[AlertResponse]:
     store = _get_alert_store(request)
-    alert_state: Optional[AlertState] = None
+    alert_state: AlertState | None = None
     if state:
         try:
             alert_state = AlertState(state)
@@ -105,16 +103,16 @@ async def list_alerts(
             raise HTTPException(
                 status_code=400,
                 detail=f"Invalid state '{state}'. Must be one of: FIRING, ACKNOWLEDGED, RESOLVED",
-            )
+            ) from None
     records = await store.list_alerts(state=alert_state, service_name=service_name)
     return [_fmt(r) for r in records]
 
 
-@router.get("/incidents", response_model=List[IncidentResponse], summary="List incident clusters")
+@router.get("/incidents", response_model=list[IncidentResponse], summary="List incident clusters")
 async def list_incidents(
     request: Request,
     open_only: bool = Query(True),
-) -> List[IncidentResponse]:
+) -> list[IncidentResponse]:
     clusterer = _get_clusterer(request)
     if clusterer is None:
         return []

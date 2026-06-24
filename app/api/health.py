@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any, Dict, Optional
+from typing import Any
 
 from fastapi import APIRouter, Request, Response
 
@@ -50,19 +50,19 @@ def mark_ready(ready: bool = True) -> None:
 
 
 @router.get("/healthz")
-async def liveness() -> Dict[str, str]:
+async def liveness() -> dict[str, str]:
     """Liveness probe – always returns 200 while the process is running."""
     return {"status": "ok"}
 
 
 @router.get("/readyz")
-async def readiness(request: Request, response: Response) -> Dict[str, Any]:
+async def readiness(request: Request, response: Response) -> dict[str, Any]:
     """Readiness probe – 200 only when the service is fully initialised.
 
     Reads subsystem references from request.app.state when available,
     falling back to module-level state set at startup.
     """
-    checks: Dict[str, str] = {}
+    checks: dict[str, str] = {}
 
     clickhouse = getattr(request.app.state, "clickhouse", _clickhouse_store)
     feature_store = getattr(request.app.state, "feature_store", _feature_store)
@@ -74,7 +74,7 @@ async def readiness(request: Request, response: Response) -> Dict[str, Any]:
         try:
             ok = await asyncio.wait_for(clickhouse.ping(), timeout=3.0)
             checks["clickhouse"] = "ok" if ok else "unreachable"
-        except asyncio.TimeoutError:
+        except TimeoutError:
             checks["clickhouse"] = "timeout"
         except Exception as exc:
             checks["clickhouse"] = f"error: {exc}"

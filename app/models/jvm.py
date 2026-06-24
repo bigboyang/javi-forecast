@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import List
-
 from pydantic import BaseModel, Field
 
 
@@ -40,4 +38,4 @@ class JvmMetricEvent(BaseModel):
 class JvmMetricBatch(BaseModel):
     """Batch wrapper for JVM metric events."""
 
-    metrics: List[JvmMetricEvent]
+    metrics: list[JvmMetricEvent]

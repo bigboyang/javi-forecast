@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +29,7 @@ class BaselineComputer:
     def __init__(self, clickhouse, interval_hours: int = 1) -> None:
         self._ch = clickhouse
         self._interval = interval_hours * 3600
-        self._task: Optional[asyncio.Task] = None
+        self._task: asyncio.Task | None = None
 
     async def start(self) -> None:
         self._task = asyncio.create_task(self._run(), name="baseline-computer")

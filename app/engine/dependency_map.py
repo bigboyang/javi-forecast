@@ -12,8 +12,7 @@ from __future__ import annotations
 
 import threading
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from typing import Dict, List, Optional, Set, Tuple
+from datetime import UTC, datetime
 
 
 @dataclass
@@ -25,7 +24,7 @@ class DependencyEdge:
     p_value: float       # Granger test p-value (lower = stronger evidence)
     max_lag: int         # lag at which causality was strongest
     updated_at: datetime = field(
-        default_factory=lambda: datetime.now(tz=timezone.utc)
+        default_factory=lambda: datetime.now(tz=UTC)
     )
 
 
@@ -44,7 +43,7 @@ class DependencyMap:
 
     def __init__(self, p_value_threshold: float = 0.05) -> None:
         self.p_value_threshold = p_value_threshold
-        self._edges: Dict[Tuple[str, str], DependencyEdge] = {}
+        self._edges: dict[tuple[str, str], DependencyEdge] = {}
         self._lock = threading.Lock()
 
     # ------------------------------------------------------------------
@@ -74,22 +73,22 @@ class DependencyMap:
     # Read API (called from event loop and API handlers)
     # ------------------------------------------------------------------
 
-    def get_causes(self, service: str) -> List[DependencyEdge]:
+    def get_causes(self, service: str) -> list[DependencyEdge]:
         """Return edges where *service* is the downstream (effect/target)."""
         with self._lock:
             return [e for e in self._edges.values() if e.target == service]
 
-    def get_effects(self, service: str) -> List[DependencyEdge]:
+    def get_effects(self, service: str) -> list[DependencyEdge]:
         """Return edges where *service* is the upstream (cause/source)."""
         with self._lock:
             return [e for e in self._edges.values() if e.source == service]
 
-    def get_all_edges(self) -> List[DependencyEdge]:
+    def get_all_edges(self) -> list[DependencyEdge]:
         """Return a snapshot of all current edges."""
         with self._lock:
             return list(self._edges.values())
 
-    def get_root_causes(self, service: str) -> List[str]:
+    def get_root_causes(self, service: str) -> list[str]:
         """Return upstream root-cause services for *service*.
 
         Performs a BFS traversal upstream from *service* and returns
@@ -97,9 +96,9 @@ class DependencyMap:
         or are direct causes if no true root is found.
         """
         with self._lock:
-            visited: Set[str] = set()
-            queue: List[str] = [service]
-            roots: List[str] = []
+            visited: set[str] = set()
+            queue: list[str] = [service]
+            roots: list[str] = []
 
             while queue:
                 current = queue.pop(0)

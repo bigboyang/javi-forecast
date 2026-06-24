@@ -21,10 +21,10 @@ import asyncio
 import logging
 import time
 from collections import defaultdict, deque
-from datetime import datetime, timezone
-from typing import Any, Dict, Deque, List, Optional, Tuple
+from datetime import UTC, datetime
+from typing import Any
 
-from ..models.metric import REDMetric, MetricPoint
+from ..models.metric import MetricPoint, REDMetric
 from ..models.span import SpanEvent
 
 logger = logging.getLogger(__name__)
@@ -50,7 +50,7 @@ class _Bucket:
         self.minute_ts: datetime = minute_ts
         self.count: int = 0
         self.errors: int = 0
-        self.durations: List[float] = []
+        self.durations: list[float] = []
 
     def add(self, span: SpanEvent) -> None:
         self.count += 1
@@ -99,24 +99,24 @@ class FeatureStore:
         self,
         maxlen: int = _DEFAULT_MAXLEN,
         max_services: int = _DEFAULT_MAX_SERVICES,
-        redis_client: Optional[Any] = None,
+        redis_client: Any | None = None,
     ) -> None:
         self.maxlen = maxlen
         self._max_services = max_services
         self._redis = redis_client
 
         # service → deque[(minute_ts, REDMetric)]
-        self._series: Dict[str, Deque[Tuple[datetime, REDMetric]]] = defaultdict(
+        self._series: dict[str, deque[tuple[datetime, REDMetric]]] = defaultdict(
             lambda: deque(maxlen=self.maxlen)
         )
         # service → current open bucket
-        self._buckets: Dict[str, _Bucket] = {}
+        self._buckets: dict[str, _Bucket] = {}
         # per-service locks
-        self._locks: Dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
+        self._locks: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
         # service → set of ingested minute timestamps (for backfill dedup)
-        self._ts_index: Dict[str, set] = defaultdict(set)
+        self._ts_index: dict[str, set] = defaultdict(set)
         # service → last-access monotonic time (for LRU eviction)
-        self._lru: Dict[str, float] = {}
+        self._lru: dict[str, float] = {}
 
     # ------------------------------------------------------------------
     # Public write API
@@ -128,7 +128,7 @@ class FeatureStore:
         self._touch(service)
         async with self._locks[service]:
             span_ts = datetime.fromtimestamp(
-                span.start_time_nano / 1e9, tz=timezone.utc
+                span.start_time_nano / 1e9, tz=UTC
             )
             minute_ts = _truncate_to_minute(span_ts)
 
@@ -174,8 +174,8 @@ class FeatureStore:
         self,
         service: str,
         metric: str,
-        window_minutes: Optional[int] = None,
-    ) -> List[MetricPoint]:
+        window_minutes: int | None = None,
+    ) -> list[MetricPoint]:
         """Return time-series points for *metric* of *service*.
 
         Parameters
@@ -191,7 +191,7 @@ class FeatureStore:
         entries = list(self._series.get(service, []))
         if window_minutes is not None:
             from datetime import timedelta
-            cutoff = datetime.now(tz=timezone.utc) - timedelta(minutes=window_minutes)
+            cutoff = datetime.now(tz=UTC) - timedelta(minutes=window_minutes)
             entries = [(ts, red) for ts, red in entries if ts >= cutoff]
 
         return [
@@ -200,17 +200,17 @@ class FeatureStore:
         ]
 
     def get_red_metrics(
-        self, service: str, window_minutes: Optional[int] = None
-    ) -> List[REDMetric]:
+        self, service: str, window_minutes: int | None = None
+    ) -> list[REDMetric]:
         """Return raw RED metric objects for *service*."""
         entries = list(self._series.get(service, []))
         if window_minutes is not None:
             from datetime import timedelta
-            cutoff = datetime.now(tz=timezone.utc) - timedelta(minutes=window_minutes)
+            cutoff = datetime.now(tz=UTC) - timedelta(minutes=window_minutes)
             entries = [(ts, red) for ts, red in entries if ts >= cutoff]
         return [red for _, red in entries]
 
-    def get_services(self) -> List[str]:
+    def get_services(self) -> list[str]:
         """Return all service names that have at least one data point."""
         return [s for s, q in self._series.items() if len(q) > 0]
 
@@ -330,7 +330,7 @@ class FeatureStore:
                         metric = REDMetric.model_validate_json(raw_value)
                     except Exception:
                         continue
-                    minute_ts = datetime.fromtimestamp(score, tz=timezone.utc)
+                    minute_ts = datetime.fromtimestamp(score, tz=UTC)
                     if minute_ts in self._ts_index[service]:
                         continue
                     self._ts_index[service].add(minute_ts)

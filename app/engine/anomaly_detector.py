@@ -18,15 +18,13 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
-import os
 import uuid
-from datetime import datetime, timezone, timedelta
-from typing import Optional
+from datetime import UTC, datetime, timedelta
 
 import numpy as np
 
 from ..config import settings
-from .prom_metrics import anomalies_detected, anomalies_suppressed, alerts_fired, alerts_active
+from .prom_metrics import alerts_active, alerts_fired, anomalies_detected, anomalies_suppressed
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +38,7 @@ class _IForestState:
         self.clf = clf
         self.max_p95 = max_p95
         self.max_rps = max_rps
-        self.trained_at: datetime = datetime.now(tz=timezone.utc)
+        self.trained_at: datetime = datetime.now(tz=UTC)
 
 
 class AnomalyDetector:
@@ -59,10 +57,10 @@ class AnomalyDetector:
         self._alerter = alerter
         self._alert_store = alert_store
         self._clusterer = anomaly_clusterer
-        self._iforest: Optional[_IForestState] = None
+        self._iforest: _IForestState | None = None
         self._suppressed: dict[str, datetime] = {}  # key → suppress_until
-        self._task: Optional[asyncio.Task] = None
-        self._last_trained: Optional[datetime] = None
+        self._task: asyncio.Task | None = None
+        self._last_trained: datetime | None = None
 
     async def start(self) -> None:
         self._task = asyncio.create_task(self._run(), name="anomaly-detector")
@@ -94,7 +92,7 @@ class AnomalyDetector:
                 train_interval = timedelta(hours=settings.ANOMALY_TRAIN_INTERVAL_HOURS)
                 if (
                     self._last_trained is None
-                    or (datetime.now(tz=timezone.utc) - self._last_trained) >= train_interval
+                    or (datetime.now(tz=UTC) - self._last_trained) >= train_interval
                 ):
                     await self._train_forest()
                 await self._detect()
@@ -149,7 +147,7 @@ class AnomalyDetector:
             ).fit(matrix),
         )
         self._iforest = _IForestState(clf, max_p95, max_rps)
-        self._last_trained = datetime.now(tz=timezone.utc)
+        self._last_trained = datetime.now(tz=UTC)
         logger.info(
             "anomaly: IsolationForest trained samples=%d max_p95=%.2f max_rps=%.2f",
             len(baselines), max_p95, max_rps,
@@ -259,7 +257,7 @@ class AnomalyDetector:
             return
 
         # Suppression window filter
-        now = datetime.now(tz=timezone.utc)
+        now = datetime.now(tz=UTC)
         to_insert: list[dict] = []
         for a in detected:
             key = f"{a['service_name']}\x00{a['span_name']}\x00{a['anomaly_type']}"

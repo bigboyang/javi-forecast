@@ -7,7 +7,7 @@ and by the HTTP ingest endpoint (POST /v1/logs).
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from ..models.log import LogEvent
 from ..rag.log_store import LogStore
@@ -37,7 +37,7 @@ class LogEventHandler:
         """
         try:
             ts = datetime.fromtimestamp(
-                event.timestamp_ms / 1000.0, tz=timezone.utc
+                event.timestamp_ms / 1000.0, tz=UTC
             )
             self._store.add_log(
                 service_name=event.service_name,

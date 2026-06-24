@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 from ..config import settings
 from .schema_context import build_system_prompt
@@ -70,8 +70,7 @@ class TextToSQLEngine:
                 "anthropic package not installed – run: pip install anthropic>=0.25.0"
             ) from exc
 
-        import anthropic as _anthropic
-        self._client = _anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY)
+        self._client = anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY)
         self._model = settings.LLM_MODEL
         self._max_rows = settings.RAG_MAX_ROWS
         logger.info("TextToSQLEngine ready model=%s max_rows=%d", self._model, self._max_rows)
@@ -104,7 +103,7 @@ class TextToSQLEngine:
         self,
         question: str,
         clickhouse_store,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """End-to-end: natural language → SQL → execute → return result dict.
 
         Parameters
@@ -133,8 +132,8 @@ class TextToSQLEngine:
             timeout=settings.RAG_SQL_TIMEOUT_SECONDS,
         )
 
-        columns: List[str] = result.column_names
-        rows: List[List[Any]] = [list(r) for r in result.result_rows[: self._max_rows]]
+        columns: list[str] = result.column_names
+        rows: list[list[Any]] = [list(r) for r in result.result_rows[: self._max_rows]]
 
         return {
             "question": question,

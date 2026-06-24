@@ -9,12 +9,11 @@ GET /api/metrics/dashboard                     – combined forecast + actual pe
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request, status
 from pydantic import BaseModel
 
-from ..models.metric import MetricPoint, REDMetric, TimeSeriesData
+from ..models.metric import REDMetric, TimeSeriesData
 
 router = APIRouter(prefix="/api/metrics", tags=["metrics"])
 
@@ -43,18 +42,18 @@ def _get_forecast_store(request: Request):
 class ServiceInfo(BaseModel):
     service_name: str
     data_points: int
-    metrics: List[str] = list(_METRIC_NAMES)
+    metrics: list[str] = list(_METRIC_NAMES)
 
 
 class DashboardEntry(BaseModel):
     service_name: str
     # Latest observed values
-    current: Optional[REDMetric] = None
+    current: REDMetric | None = None
     # Forecast metadata (from ForecastStore)
     is_anomaly_predicted: bool = False
-    anomaly_severity: Optional[str] = None
-    forecast_model: Optional[str] = None
-    forecast_generated_at: Optional[datetime] = None
+    anomaly_severity: str | None = None
+    forecast_model: str | None = None
+    forecast_generated_at: datetime | None = None
     # How many observed data points are available
     data_points: int = 0
 
@@ -66,10 +65,10 @@ class DashboardEntry(BaseModel):
 
 @router.get(
     "/services",
-    response_model=List[ServiceInfo],
+    response_model=list[ServiceInfo],
     summary="List services that have RED metric data",
 )
-async def list_services(request: Request) -> List[ServiceInfo]:
+async def list_services(request: Request) -> list[ServiceInfo]:
     """Return all services with at least one RED data point."""
     feature_store = _get_feature_store(request)
     services = feature_store.get_services()
@@ -143,10 +142,10 @@ async def get_metric_snapshot(service_name: str, request: Request) -> REDMetric:
 
 @router.get(
     "/dashboard",
-    response_model=List[DashboardEntry],
+    response_model=list[DashboardEntry],
     summary="Combined current metrics + forecast status per service",
 )
-async def get_dashboard_summary(request: Request) -> List[DashboardEntry]:
+async def get_dashboard_summary(request: Request) -> list[DashboardEntry]:
     """Return a dashboard-ready summary for every known service.
 
     Each entry includes:
@@ -161,7 +160,7 @@ async def get_dashboard_summary(request: Request) -> List[DashboardEntry]:
     forecast_store = _get_forecast_store(request)
 
     services = feature_store.get_services()
-    entries: List[DashboardEntry] = []
+    entries: list[DashboardEntry] = []
 
     for service in sorted(services):
         # Latest observed snapshot

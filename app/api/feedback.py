@@ -8,7 +8,6 @@ GET  /api/alerts/feedback/stats  – aggregate FP/FN counts per service
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
@@ -30,7 +29,7 @@ class FeedbackRequest(BaseModel):
         description="True = alert fired but nothing was wrong (FP). "
         "False = alert did NOT fire but an issue existed (FN).",
     )
-    note: Optional[str] = Field(
+    note: str | None = Field(
         default=None,
         max_length=2000,
         description="Free-text operator note (root cause, ticket link, etc.)",
@@ -43,14 +42,14 @@ class FeedbackResponse(BaseModel):
     metric_name: str
     severity: str
     is_false_positive: bool
-    note: Optional[str]
+    note: str | None
     created_at: datetime
 
 
 class FeedbackStatsResponse(BaseModel):
     total: int
-    false_positives_by_service: Dict[str, int]
-    false_negatives_by_service: Dict[str, int]
+    false_positives_by_service: dict[str, int]
+    false_negatives_by_service: dict[str, int]
 
 
 # ---------------------------------------------------------------------------
@@ -112,14 +111,14 @@ async def submit_feedback(
 
 @router.get(
     "/feedback",
-    response_model=List[FeedbackResponse],
+    response_model=list[FeedbackResponse],
     summary="List stored alert feedback entries",
 )
 async def list_feedback(
     request: Request,
-    service: Optional[str] = Query(default=None, description="Filter by service name"),
-    metric: Optional[str] = Query(default=None, description="Filter by metric name"),
-) -> List[FeedbackResponse]:
+    service: str | None = Query(default=None, description="Filter by service name"),
+    metric: str | None = Query(default=None, description="Filter by metric name"),
+) -> list[FeedbackResponse]:
     """Return operator feedback entries, newest first."""
     store = _get_store(request)
     entries = store.get_all(service_name=service, metric_name=metric)

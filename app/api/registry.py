@@ -7,7 +7,7 @@ GET /api/services/{service} – resource metadata for a single service
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request, status
 from pydantic import BaseModel
@@ -22,19 +22,19 @@ router = APIRouter(prefix="/api/services", tags=["registry"])
 
 class ServiceMetadataResponse(BaseModel):
     service_name: str
-    service_version: Optional[str]
-    deployment_environment: Optional[str]
-    k8s_pod_name: Optional[str]
-    k8s_namespace: Optional[str]
-    cloud_region: Optional[str]
-    host_name: Optional[str]
-    extra: Dict[str, Any]
+    service_version: str | None
+    deployment_environment: str | None
+    k8s_pod_name: str | None
+    k8s_namespace: str | None
+    cloud_region: str | None
+    host_name: str | None
+    extra: dict[str, Any]
     last_seen: datetime
 
 
 class ServiceListResponse(BaseModel):
     total: int
-    services: List[ServiceMetadataResponse]
+    services: list[ServiceMetadataResponse]
 
 
 # ---------------------------------------------------------------------------

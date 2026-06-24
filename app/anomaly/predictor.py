@@ -16,12 +16,12 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from typing import TYPE_CHECKING, List, Optional
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 
 import numpy as np
 
-from ..models.forecast import ForecastResult, PredictionPoint
+from ..models.forecast import ForecastResult
 
 if TYPE_CHECKING:
     from ..engine.baseline_store import BaselineStore
@@ -41,7 +41,7 @@ class AnomalyPrediction:
     expected_value: float
     z_score: float
     predicted_at: datetime           # when the anomaly is predicted to occur
-    detected_at: datetime = field(default_factory=lambda: datetime.now(tz=timezone.utc))
+    detected_at: datetime = field(default_factory=lambda: datetime.now(tz=UTC))
     seconds_until_anomaly: float = 0.0
 
 
@@ -68,8 +68,8 @@ class AnomalyPredictor:
         self,
         result: ForecastResult,
         historical_values: np.ndarray,
-        baseline_store: Optional["BaselineStore"] = None,
-    ) -> Optional[AnomalyPrediction]:
+        baseline_store: BaselineStore | None = None,
+    ) -> AnomalyPrediction | None:
         """Return the first (soonest) anomaly prediction, or None.
 
         Parameters
@@ -93,7 +93,7 @@ class AnomalyPredictor:
         if global_std == 0:
             global_std = 1e-6
 
-        now = datetime.now(tz=timezone.utc)
+        now = datetime.now(tz=UTC)
 
         for pt in result.predictions:
             # Use hour-of-week baseline if available for this slot
@@ -121,7 +121,7 @@ class AnomalyPredictor:
             # Make predicted_at timezone-aware if needed
             predicted_at = pt.timestamp
             if predicted_at.tzinfo is None:
-                predicted_at = predicted_at.replace(tzinfo=timezone.utc)
+                predicted_at = predicted_at.replace(tzinfo=UTC)
 
             secs = max(0.0, (predicted_at - now).total_seconds())
             logger.info(
@@ -147,12 +147,12 @@ class AnomalyPredictor:
 
     def analyse_all(
         self,
-        results: List[ForecastResult],
+        results: list[ForecastResult],
         historical_map: dict[str, np.ndarray],
-        baseline_store: Optional["BaselineStore"] = None,
-    ) -> List[AnomalyPrediction]:
+        baseline_store: BaselineStore | None = None,
+    ) -> list[AnomalyPrediction]:
         """Analyse a list of forecast results; return all anomaly predictions."""
-        predictions: List[AnomalyPrediction] = []
+        predictions: list[AnomalyPrediction] = []
         for result in results:
             key = f"{result.service_name}:{result.metric_name}"
             historical = historical_map.get(key)

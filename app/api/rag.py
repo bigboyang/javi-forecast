@@ -15,8 +15,8 @@ GET  /api/rag/logs/recent    – fetch recent log records (optional ?service=&mi
 from __future__ import annotations
 
 import logging
-from datetime import datetime
-from typing import Any, Dict, List, Optional
+from datetime import UTC, datetime
+from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
@@ -46,8 +46,8 @@ class QueryRequest(BaseModel):
 class QueryResponse(BaseModel):
     question: str
     sql: str
-    columns: List[str]
-    rows: List[List[Any]]
+    columns: list[str]
+    rows: list[list[Any]]
     row_count: int
 
 
@@ -87,17 +87,17 @@ class RCAResponse(BaseModel):
     metric_name: str
     severity: str
     z_score: float
-    similar_incidents: List[str]
-    rca: Dict[str, Any]
+    similar_incidents: list[str]
+    rca: dict[str, Any]
 
 
 class LogIngestRequest(BaseModel):
     service_name: str = Field(..., min_length=1)
     severity: str = Field(..., pattern="^(TRACE|DEBUG|INFO|WARN|ERROR|FATAL)$")
     body: str = Field(..., min_length=1)
-    timestamp_ms: Optional[int] = Field(default=None, description="Epoch milliseconds; defaults to now")
-    trace_id: Optional[str] = None
-    span_id: Optional[str] = None
+    timestamp_ms: int | None = Field(default=None, description="Epoch milliseconds; defaults to now")
+    trace_id: str | None = None
+    span_id: str | None = None
 
 
 class LogIngestResponse(BaseModel):
@@ -106,7 +106,7 @@ class LogIngestResponse(BaseModel):
     severity: str
     body: str
     timestamp: datetime
-    trace_id: Optional[str]
+    trace_id: str | None
 
 
 class LogSearchRequest(BaseModel):
@@ -116,16 +116,16 @@ class LogSearchRequest(BaseModel):
         max_length=2000,
         examples=["Show me ERROR logs from payment-service in the last hour"],
     )
-    service_name: Optional[str] = Field(default=None, description="Filter by service name")
+    service_name: str | None = Field(default=None, description="Filter by service name")
     top_k: int = Field(default=10, ge=1, le=50)
 
 
 class LogSearchResponse(BaseModel):
     question: str
-    service_name: Optional[str]
+    service_name: str | None
     matched_count: int
-    logs: List[str]
-    analysis: Dict[str, Any]
+    logs: list[str]
+    analysis: dict[str, Any]
 
 
 class LogRecordResponse(BaseModel):
@@ -134,7 +134,7 @@ class LogRecordResponse(BaseModel):
     severity: str
     body: str
     timestamp: datetime
-    trace_id: Optional[str]
+    trace_id: str | None
 
 
 # ---------------------------------------------------------------------------
@@ -273,13 +273,13 @@ async def rag_query(body: QueryRequest, request: Request) -> QueryResponse:
         raise HTTPException(
             status_code=status.HTTP_504_GATEWAY_TIMEOUT,
             detail=f"ClickHouse query timed out after {settings.RAG_SQL_TIMEOUT_SECONDS}s",
-        )
+        ) from None
     except Exception as exc:
         logger.error("RAG query failed: %s", exc, exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Query failed: {exc}",
-        )
+        ) from exc
 
     return QueryResponse(**result)
 
@@ -287,9 +287,9 @@ async def rag_query(body: QueryRequest, request: Request) -> QueryResponse:
 @router.get(
     "/schema",
     summary="Return the ClickHouse schema context used by the LLM",
-    response_model=Dict[str, str],
+    response_model=dict[str, str],
 )
-async def get_schema() -> Dict[str, str]:
+async def get_schema() -> dict[str, str]:
     """Expose the schema prompt so callers can understand which tables/columns
     are available and how the LLM is instructed to generate SQL."""
     return {"schema_context": build_system_prompt(settings.RAG_MAX_ROWS)}
@@ -342,13 +342,13 @@ async def create_incident(
 
 @router.get(
     "/incidents",
-    response_model=List[IncidentResponse],
+    response_model=list[IncidentResponse],
     summary="List stored incidents",
 )
 async def list_incidents(
     request: Request,
-    service: Optional[str] = Query(default=None, description="Filter by service name"),
-) -> List[IncidentResponse]:
+    service: str | None = Query(default=None, description="Filter by service name"),
+) -> list[IncidentResponse]:
     """Return all stored incidents, optionally filtered by service name.
 
     Requires `INCIDENT_RAG_ENABLED=true`.
@@ -407,7 +407,7 @@ async def analyze_incident(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Analysis failed: {exc}",
-        )
+        ) from exc
 
     return RCAResponse(**result)
 
@@ -434,12 +434,10 @@ async def ingest_log(body: LogIngestRequest, request: Request) -> LogIngestRespo
     _require_log_rag_enabled()
     store = _get_log_store(request)
 
-    from datetime import timezone as _tz
-
     ts = None
     if body.timestamp_ms is not None:
         from datetime import datetime as _dt
-        ts = _dt.fromtimestamp(body.timestamp_ms / 1000.0, tz=_tz.utc)
+        ts = _dt.fromtimestamp(body.timestamp_ms / 1000.0, tz=UTC)
 
     record = store.add_log(
         service_name=body.service_name,
@@ -484,22 +482,22 @@ async def search_logs(body: LogSearchRequest, request: Request) -> LogSearchResp
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Log search failed: {exc}",
-        )
+        ) from exc
 
     return LogSearchResponse(**result)
 
 
 @router.get(
     "/logs/recent",
-    response_model=List[LogRecordResponse],
+    response_model=list[LogRecordResponse],
     summary="Fetch recent log records",
 )
 async def get_recent_logs(
     request: Request,
-    service: Optional[str] = Query(default=None, description="Filter by service name"),
+    service: str | None = Query(default=None, description="Filter by service name"),
     minutes: int = Query(default=60, ge=1, le=1440, description="Lookback window in minutes"),
     limit: int = Query(default=100, ge=1, le=1000, description="Max records to return"),
-) -> List[LogRecordResponse]:
+) -> list[LogRecordResponse]:
     """Return recent log records stored in the log vector store.
 
     Requires `LOG_RAG_ENABLED=true`.

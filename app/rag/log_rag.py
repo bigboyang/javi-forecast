@@ -14,7 +14,7 @@ import asyncio
 import json
 import logging
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from ..config import settings
 from .log_store import LogRecord, LogStore
@@ -71,9 +71,9 @@ class LogRAG:
     async def search_and_analyze(
         self,
         question: str,
-        service_name: Optional[str] = None,
+        service_name: str | None = None,
         top_k: int = 10,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Search relevant logs and generate LLM summary.
 
         Returns
@@ -108,7 +108,7 @@ class LogRAG:
             "analysis": analysis,
         }
 
-    def _parse_response(self, raw: str) -> Dict[str, Any]:
+    def _parse_response(self, raw: str) -> dict[str, Any]:
         try:
             return json.loads(raw)
         except json.JSONDecodeError:
@@ -131,16 +131,16 @@ class LogRAG:
     def _build_user_message(
         self,
         question: str,
-        service_name: Optional[str],
-        records: List[LogRecord],
+        service_name: str | None,
+        records: list[LogRecord],
     ) -> str:
         lines = [
-            f"## Question",
+            "## Question",
             question,
             "",
         ]
         if service_name:
-            lines += [f"## Service Filter", service_name, ""]
+            lines += ["## Service Filter", service_name, ""]
 
         lines += ["## Matched Log Records"]
         if records:

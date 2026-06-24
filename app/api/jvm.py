@@ -8,7 +8,6 @@ GET /api/jvm/history/{service}     – recent JVM snapshots (up to window_minute
 from __future__ import annotations
 
 import logging
-from typing import List, Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request, status
 
@@ -31,10 +30,10 @@ def _get_jvm_store(request: Request):
 
 @router.get(
     "/services",
-    response_model=List[str],
+    response_model=list[str],
     summary="List services with JVM metrics",
 )
-async def list_jvm_services(request: Request) -> List[str]:
+async def list_jvm_services(request: Request) -> list[str]:
     """Return names of all services that have at least one JVM snapshot."""
     store = _get_jvm_store(request)
     return store.get_services()
@@ -59,7 +58,7 @@ async def get_jvm_health(service_name: str, request: Request) -> JvmMetricEvent:
 
 @router.get(
     "/history/{service_name}",
-    response_model=List[JvmMetricEvent],
+    response_model=list[JvmMetricEvent],
     summary="JVM snapshot history for a service",
 )
 async def get_jvm_history(
@@ -71,7 +70,7 @@ async def get_jvm_history(
         le=4320,
         description="Lookback window in minutes (1–4320)",
     ),
-) -> List[JvmMetricEvent]:
+) -> list[JvmMetricEvent]:
     """Return JVM metric snapshots for *service_name* within the last N minutes."""
     store = _get_jvm_store(request)
     snapshots = store.get_snapshots(service_name, window_minutes=window_minutes)

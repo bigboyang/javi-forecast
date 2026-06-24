@@ -7,7 +7,6 @@ endpoint so that all span ingestion goes through a single code path.
 from __future__ import annotations
 
 import logging
-from typing import Optional
 
 from ..engine.feature_store import FeatureStore
 from ..engine.service_registry import ServiceRegistry
@@ -31,8 +30,8 @@ class EventHandler:
     def __init__(
         self,
         feature_store: FeatureStore,
-        topology_tracker: Optional[SpanTopologyTracker] = None,
-        service_registry: Optional[ServiceRegistry] = None,
+        topology_tracker: SpanTopologyTracker | None = None,
+        service_registry: ServiceRegistry | None = None,
     ) -> None:
         self._store = feature_store
         self._topology = topology_tracker

@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import List, Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request, status
 
@@ -32,29 +31,29 @@ def _get_store(request: Request):
 
 @router.get(
     "/deploy",
-    response_model=List[DeploymentEvent],
+    response_model=list[DeploymentEvent],
     summary="List recent deployment events across all services",
 )
 async def list_deployments(
     request: Request,
-    since_ms: Optional[int] = Query(None, description="Unix ms lower bound"),
+    since_ms: int | None = Query(None, description="Unix ms lower bound"),
     limit: int = Query(100, ge=1, le=500),
-) -> List[DeploymentEvent]:
+) -> list[DeploymentEvent]:
     store = _get_store(request)
     return store.get_all(since_ms=since_ms, limit=limit)
 
 
 @router.get(
     "/deploy/{service_name}",
-    response_model=List[DeploymentEvent],
+    response_model=list[DeploymentEvent],
     summary="List deployment events for a specific service",
 )
 async def list_service_deployments(
     service_name: str,
     request: Request,
-    since_ms: Optional[int] = Query(None, description="Unix ms lower bound"),
+    since_ms: int | None = Query(None, description="Unix ms lower bound"),
     limit: int = Query(50, ge=1, le=200),
-) -> List[DeploymentEvent]:
+) -> list[DeploymentEvent]:
     store = _get_store(request)
     events = store.get_by_service(service_name, since_ms=since_ms, limit=limit)
     return events
@@ -74,7 +73,7 @@ async def ingest_deployment(
     In production, deployment events should flow via javi-collector → Kafka.
     This endpoint is useful for local dev or non-Kafka setups.
     """
-    store = _get_store(request)
+    _get_store(request)  # ensure DeploymentStore is initialised (raises 503 otherwise)
     deploy_handler = getattr(request.app.state, "deploy_event_handler", None)
     if deploy_handler is None:
         raise HTTPException(

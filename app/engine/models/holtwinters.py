@@ -7,7 +7,6 @@ additive-trend only (Holt's linear method) when the series is shorter than
 two full seasonal cycles.
 """
 
-from typing import Optional, Tuple
 
 import numpy as np
 
@@ -94,7 +93,7 @@ class HoltWintersForecaster(BaseForecaster):
 
     def predict(
         self, steps: int
-    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         if not self._fitted or self._result is None:
             raise RuntimeError("Model has not been fitted yet")
         if steps < 1:

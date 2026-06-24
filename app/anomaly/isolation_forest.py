@@ -21,8 +21,7 @@ Model lifecycle
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
-from typing import Dict, List, Optional, Tuple
+from datetime import UTC, datetime
 
 import numpy as np
 
@@ -56,11 +55,11 @@ class _ServiceModel:
         self.model = model
         self.scaler_mean: np.ndarray = scaler_mean
         self.scaler_std: np.ndarray = scaler_std
-        self.fitted_at: datetime = datetime.now(tz=timezone.utc)
+        self.fitted_at: datetime = datetime.now(tz=UTC)
         self.n_samples: int = n_samples
 
 
-def _build_matrix(metrics: List[REDMetric]) -> np.ndarray:
+def _build_matrix(metrics: list[REDMetric]) -> np.ndarray:
     """Convert a list of REDMetric objects to an (N, 5) float array."""
     return np.array(
         [
@@ -73,9 +72,9 @@ def _build_matrix(metrics: List[REDMetric]) -> np.ndarray:
 
 def _standardise(
     X: np.ndarray,
-    mean: Optional[np.ndarray] = None,
-    std: Optional[np.ndarray] = None,
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    mean: np.ndarray | None = None,
+    std: np.ndarray | None = None,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Z-score standardise X column-wise.
 
     If *mean* and *std* are provided they are used directly (for transform-only
@@ -115,7 +114,7 @@ class IsolationForestDetector:
         self.min_samples = min_samples
         self.refit_interval_minutes = refit_interval_minutes
 
-        self._models: Dict[str, _ServiceModel] = {}
+        self._models: dict[str, _ServiceModel] = {}
 
     # ------------------------------------------------------------------
     # Public API
@@ -124,8 +123,8 @@ class IsolationForestDetector:
     def fit_and_predict(
         self,
         service: str,
-        metrics: List[REDMetric],
-    ) -> Optional[AnomalyPrediction]:
+        metrics: list[REDMetric],
+    ) -> AnomalyPrediction | None:
         """Fit (or reuse) a model for *service* and score the latest vector.
 
         Returns an ``AnomalyPrediction`` if the most-recent RED snapshot is
@@ -177,7 +176,7 @@ class IsolationForestDetector:
         )
         score = float(existing.model.score_samples(latest_std)[0])
 
-        severity: Optional[str] = None
+        severity: str | None = None
         if score <= _SCORE_THRESHOLD_CRITICAL:
             severity = "critical"
         elif score <= _SCORE_THRESHOLD_WARN:
@@ -195,7 +194,7 @@ class IsolationForestDetector:
         top_dim = dim_names[int(np.argmax(dim_z))]
         top_z = float(dim_z.max())
 
-        now = datetime.now(tz=timezone.utc)
+        now = datetime.now(tz=UTC)
         logger.warning(
             "IsolationForest anomaly service=%s score=%.3f top_dim=%s z=%.2f severity=%s",
             service,
@@ -220,7 +219,7 @@ class IsolationForestDetector:
     # ------------------------------------------------------------------
 
     def _should_refit(self, model: _ServiceModel, current_n: int) -> bool:
-        now = datetime.now(tz=timezone.utc)
+        now = datetime.now(tz=UTC)
         elapsed_minutes = (now - model.fitted_at).total_seconds() / 60.0
         if elapsed_minutes >= self.refit_interval_minutes:
             return True

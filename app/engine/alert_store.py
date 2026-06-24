@@ -12,15 +12,15 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
-from dataclasses import asdict, dataclass
-from datetime import datetime, timezone, timedelta
-from enum import Enum
-from typing import Any, Dict, List, Optional
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
+from enum import StrEnum
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
 
-class AlertState(str, Enum):
+class AlertState(StrEnum):
     FIRING = "FIRING"
     ACKNOWLEDGED = "ACKNOWLEDGED"
     RESOLVED = "RESOLVED"
@@ -38,9 +38,9 @@ class AlertRecord:
     z_score: float
     state: AlertState
     fired_at: datetime
-    acked_at: Optional[datetime] = None
-    resolved_at: Optional[datetime] = None
-    ack_by: Optional[str] = None
+    acked_at: datetime | None = None
+    resolved_at: datetime | None = None
+    ack_by: str | None = None
 
 
 class AlertStore:
@@ -57,7 +57,7 @@ class AlertStore:
     """
 
     def __init__(self, ttl_hours: int = 24, clickhouse: Any = None) -> None:
-        self._alerts: Dict[str, AlertRecord] = {}
+        self._alerts: dict[str, AlertRecord] = {}
         self._lock = asyncio.Lock()
         self._ttl = timedelta(hours=ttl_hours)
         self._ch = clickhouse
@@ -78,33 +78,33 @@ class AlertStore:
             baseline_value=float(anomaly.get("baseline_value", 0)),
             z_score=float(anomaly.get("z_score", 0)),
             state=AlertState.FIRING,
-            fired_at=datetime.now(tz=timezone.utc),
+            fired_at=datetime.now(tz=UTC),
         )
         async with self._lock:
             self._alerts[record.id] = record
         await self._persist(record)
         return record
 
-    async def acknowledge(self, alert_id: str, ack_by: str = "user") -> Optional[AlertRecord]:
+    async def acknowledge(self, alert_id: str, ack_by: str = "user") -> AlertRecord | None:
         """Transition FIRING → ACKNOWLEDGED. Returns None if not found or wrong state."""
         async with self._lock:
             rec = self._alerts.get(alert_id)
             if rec is None or rec.state != AlertState.FIRING:
                 return None
             rec.state = AlertState.ACKNOWLEDGED
-            rec.acked_at = datetime.now(tz=timezone.utc)
+            rec.acked_at = datetime.now(tz=UTC)
             rec.ack_by = ack_by
         await self._persist(rec)
         return rec
 
-    async def resolve(self, alert_id: str) -> Optional[AlertRecord]:
+    async def resolve(self, alert_id: str) -> AlertRecord | None:
         """Transition any non-RESOLVED state → RESOLVED. Returns None if not found."""
         async with self._lock:
             rec = self._alerts.get(alert_id)
             if rec is None or rec.state == AlertState.RESOLVED:
                 return None
             rec.state = AlertState.RESOLVED
-            rec.resolved_at = datetime.now(tz=timezone.utc)
+            rec.resolved_at = datetime.now(tz=UTC)
         await self._persist(rec)
         return rec
 
@@ -112,15 +112,15 @@ class AlertStore:
     # Queries
     # ------------------------------------------------------------------
 
-    async def get_alert(self, alert_id: str) -> Optional[AlertRecord]:
+    async def get_alert(self, alert_id: str) -> AlertRecord | None:
         async with self._lock:
             return self._alerts.get(alert_id)
 
     async def list_alerts(
         self,
-        state: Optional[AlertState] = None,
-        service_name: Optional[str] = None,
-    ) -> List[AlertRecord]:
+        state: AlertState | None = None,
+        service_name: str | None = None,
+    ) -> list[AlertRecord]:
         async with self._lock:
             self._purge_expired()
             records = list(self._alerts.values())
@@ -139,7 +139,7 @@ class AlertStore:
     # ------------------------------------------------------------------
 
     def _purge_expired(self) -> None:
-        now = datetime.now(tz=timezone.utc)
+        now = datetime.now(tz=UTC)
         expired = [
             k for k, v in self._alerts.items()
             if v.state == AlertState.RESOLVED
