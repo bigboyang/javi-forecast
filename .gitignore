@@ -18,6 +18,7 @@ venv/
 /target/
 /logs/
 /data/
+/dlq/
 /tmp/
 /cache/
 /backup/
