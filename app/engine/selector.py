@@ -7,13 +7,12 @@ returned immediately without any evaluation overhead.
 """
 
 import logging
-from typing import Tuple
 
 import numpy as np
 
+from .models.arima import ARIMAForecaster
 from .models.base import BaseForecaster
 from .models.ewma import EWMAForecaster
-from .models.arima import ARIMAForecaster
 from .models.holtwinters import HoltWintersForecaster
 
 logger = logging.getLogger(__name__)
@@ -28,7 +27,7 @@ _MODEL_CLASSES = {
 def select_model(
     values: np.ndarray,
     model_name: str = "auto",
-) -> Tuple[BaseForecaster, float]:
+) -> tuple[BaseForecaster, float]:
     """Return *(fitted_model, mse)* for the chosen (or best) model.
 
     Parameters

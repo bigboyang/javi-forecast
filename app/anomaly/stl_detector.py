@@ -29,7 +29,6 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Optional
 
 import numpy as np
 
@@ -72,7 +71,7 @@ class STLAnomalyDetector:
         self.period = period
         self.threshold_z = threshold_z
 
-    def detect(self, values: np.ndarray) -> Optional[STLAnomalyResult]:
+    def detect(self, values: np.ndarray) -> STLAnomalyResult | None:
         """Run STL decomposition on *values* and score the final data point.
 
         Parameters

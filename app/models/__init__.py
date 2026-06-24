@@ -1,12 +1,12 @@
-from .span import SpanEvent, SpanBatch
-from .metric import REDMetric, MetricPoint, TimeSeriesData
 from .forecast import (
-    ForecastResult,
-    ForecastRequest,
-    PredictionPoint,
     CapacityForecast,
+    ForecastRequest,
+    ForecastResult,
     ModelType,
+    PredictionPoint,
 )
+from .metric import MetricPoint, REDMetric, TimeSeriesData
+from .span import SpanBatch, SpanEvent
 
 __all__ = [
     "SpanEvent",

@@ -12,7 +12,6 @@ import math
 from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Deque, Dict, List, Optional, Tuple
 
 
 @dataclass
@@ -21,8 +20,8 @@ class _PredRecord:
     metric_name: str
     predicted_for: datetime
     predicted_value: float
-    actual_value: Optional[float] = None
-    error: Optional[float] = None  # actual - predicted
+    actual_value: float | None = None
+    error: float | None = None  # actual - predicted
 
 
 class AccuracyTracker:
@@ -44,7 +43,7 @@ class AccuracyTracker:
     ) -> None:
         self._maxlen = maxlen
         self._match_window = timedelta(seconds=match_window_seconds)
-        self._preds: Dict[Tuple[str, str], Deque[_PredRecord]] = {}
+        self._preds: dict[tuple[str, str], deque[_PredRecord]] = {}
         self._lock = asyncio.Lock()
 
     # ------------------------------------------------------------------
@@ -130,7 +129,7 @@ class AccuracyTracker:
             "n": len(evaluated),
         }
 
-    async def list_services(self) -> List[Tuple[str, str]]:
+    async def list_services(self) -> list[tuple[str, str]]:
         """Return all (service_name, metric_name) pairs with tracked data."""
         async with self._lock:
             return list(self._preds.keys())

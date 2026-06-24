@@ -14,8 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timezone, timedelta
-from typing import List, Optional
+from datetime import UTC, datetime, timedelta
 
 from ..config import settings
 from ..models.metric import REDMetric
@@ -34,11 +33,11 @@ class ClickHouseStore:
 
     def __init__(
         self,
-        host: Optional[str] = None,
-        port: Optional[int] = None,
-        database: Optional[str] = None,
-        user: Optional[str] = None,
-        password: Optional[str] = None,
+        host: str | None = None,
+        port: int | None = None,
+        database: str | None = None,
+        user: str | None = None,
+        password: str | None = None,
     ) -> None:
         self._host = host or settings.CLICKHOUSE_HOST
         self._port = port or settings.CLICKHOUSE_PORT
@@ -99,7 +98,7 @@ class ClickHouseStore:
     # Query helpers
     # ------------------------------------------------------------------
 
-    async def _query(self, sql: str, params: Optional[dict] = None):
+    async def _query(self, sql: str, params: dict | None = None):
         """Execute *sql* and return a clickhouse_connect QueryResult."""
         if self._client is None:
             raise RuntimeError("ClickHouseStore not connected – call connect() first")
@@ -113,7 +112,7 @@ class ClickHouseStore:
     # Public API
     # ------------------------------------------------------------------
 
-    async def query_services(self) -> List[str]:
+    async def query_services(self) -> list[str]:
         """Return the list of distinct service names seen in the last 24 h."""
         sql = """
             SELECT DISTINCT service_name
@@ -129,7 +128,7 @@ class ClickHouseStore:
         service: str,
         from_ts: datetime,
         to_ts: datetime,
-    ) -> List[REDMetric]:
+    ) -> list[REDMetric]:
         """Return 1-minute RED metrics for *service* in [from_ts, to_ts].
 
         Falls back to computing from ``apm.spans`` when
@@ -148,7 +147,7 @@ class ClickHouseStore:
         service: str,
         from_ts: datetime,
         to_ts: datetime,
-    ) -> List[REDMetric]:
+    ) -> list[REDMetric]:
         # Use mv_red_1m_state (1-minute aggregated MV) as the primary source.
         # apm.red_baseline only stores hourly baselines without time-series data.
         sql = """
@@ -173,7 +172,7 @@ class ClickHouseStore:
             sql,
             {"service": service, "from_ts": from_ts, "to_ts": to_ts},
         )
-        metrics: List[REDMetric] = []
+        metrics: list[REDMetric] = []
         for row in result.result_rows:
             metrics.append(
                 REDMetric(
@@ -193,7 +192,7 @@ class ClickHouseStore:
         service: str,
         from_ts: datetime,
         to_ts: datetime,
-    ) -> List[REDMetric]:
+    ) -> list[REDMetric]:
         """Compute RED metrics directly from raw spans (slower fallback)."""
         sql = """
             SELECT
@@ -221,7 +220,7 @@ class ClickHouseStore:
             sql,
             {"service": service, "from_ts": from_ts, "to_ts": to_ts},
         )
-        metrics: List[REDMetric] = []
+        metrics: list[REDMetric] = []
         for row in result.result_rows:
             total = int(row[2])
             errors = int(row[3])
@@ -248,7 +247,7 @@ class ClickHouseStore:
             logger.info("Backfill disabled – skipping")
             return
 
-        to_ts = datetime.now(tz=timezone.utc)
+        to_ts = datetime.now(tz=UTC)
         from_ts = to_ts - timedelta(hours=settings.BACKFILL_HOURS)
 
         try:
@@ -285,7 +284,7 @@ class ClickHouseStore:
     # Anomaly / RCA write helpers (ported from collector Go anomaly pkg)
     # ------------------------------------------------------------------
 
-    async def _command(self, sql: str, data: Optional[list] = None) -> None:
+    async def _command(self, sql: str, data: list | None = None) -> None:
         """Execute a write *sql* statement (INSERT / CREATE …)."""
         if self._client is None:
             raise RuntimeError("ClickHouseStore not connected")
@@ -587,9 +586,9 @@ def _ensure_utc(ts) -> datetime:
     """Ensure *ts* (datetime or similar) is timezone-aware UTC."""
     if isinstance(ts, datetime):
         if ts.tzinfo is None:
-            return ts.replace(tzinfo=timezone.utc)
+            return ts.replace(tzinfo=UTC)
         return ts
-    return datetime.now(tz=timezone.utc)
+    return datetime.now(tz=UTC)
 
 
 def loop_run(client, sql: str, rows: list) -> None:

@@ -18,8 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timedelta, timezone
-from typing import Dict, List, Optional, Tuple
+from datetime import UTC, datetime, timedelta
 
 import numpy as np
 
@@ -41,8 +40,8 @@ _FLAT_STD_THRESHOLD = 1e-4
 
 
 def _collect_and_align(
-    service_series: Dict[str, List[Tuple[datetime, float]]]
-) -> Tuple[List[str], np.ndarray]:
+    service_series: dict[str, list[tuple[datetime, float]]]
+) -> tuple[list[str], np.ndarray]:
     """Align per-service time-series to a common timestamp grid.
 
     1. Drop services with flat (near-zero variance) error_rate.
@@ -50,7 +49,7 @@ def _collect_and_align(
     3. Return (names, matrix) where matrix.shape == (T, n_services).
     """
     # Drop flat series
-    filtered: Dict[str, List[Tuple[datetime, float]]] = {}
+    filtered: dict[str, list[tuple[datetime, float]]] = {}
     for name, pts in service_series.items():
         values = np.array([v for _, v in pts], dtype=float)
         if values.std() >= _FLAT_STD_THRESHOLD:
@@ -114,7 +113,7 @@ class VarForecaster:
         self.window_minutes = window_minutes
         self.min_services = min_services
 
-        self._task: Optional[asyncio.Task] = None
+        self._task: asyncio.Task | None = None
         self._running = False
 
     # ------------------------------------------------------------------
@@ -162,7 +161,7 @@ class VarForecaster:
             )
             return
 
-        service_series: Dict[str, List[Tuple[datetime, float]]] = {}
+        service_series: dict[str, list[tuple[datetime, float]]] = {}
         for service in services:
             pts = self._feature_store.get_series(
                 service, "error_rate", window_minutes=self.window_minutes
@@ -189,8 +188,8 @@ class VarForecaster:
 
     def _fit_and_forecast(
         self,
-        service_series: Dict[str, List[Tuple[datetime, float]]],
-    ) -> List[ForecastResult]:
+        service_series: dict[str, list[tuple[datetime, float]]],
+    ) -> list[ForecastResult]:
         try:
             from statsmodels.tsa.vector_ar.var_model import VAR
         except ImportError:
@@ -237,7 +236,7 @@ class VarForecaster:
         lower = np.maximum(lower, 0.0)
         mid = np.maximum(mid, 0.0)
 
-        now = datetime.now(tz=timezone.utc)
+        now = datetime.now(tz=UTC)
         confidences = np.exp(-np.arange(self.horizon_minutes) / self.horizon_minutes)
         future_ts = [now + timedelta(minutes=i + 1) for i in range(self.horizon_minutes)]
 
@@ -249,7 +248,7 @@ class VarForecaster:
         except Exception:
             mse_per_col = np.full(len(names), np.nan)
 
-        results: List[ForecastResult] = []
+        results: list[ForecastResult] = []
         for col, service in enumerate(names):
             points = [
                 PredictionPoint(

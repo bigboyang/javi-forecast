@@ -14,7 +14,7 @@ import asyncio
 import json
 import logging
 import re
-from typing import Any, Dict, List
+from typing import Any
 
 from ..config import settings
 from .incident_store import Incident, IncidentStore
@@ -59,9 +59,7 @@ class IncidentRAG:
                 "anthropic package not installed – run: pip install anthropic>=0.25.0"
             ) from exc
 
-        import anthropic as _anthropic
-
-        self._client = _anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY)
+        self._client = anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY)
         self._model = settings.LLM_MODEL
         self._store = incident_store
         logger.info("IncidentRAG ready model=%s", self._model)
@@ -75,7 +73,7 @@ class IncidentRAG:
         expected_value: float,
         z_score: float,
         top_k: int = 5,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Find similar incidents and generate RCA.
 
         Returns
@@ -115,7 +113,7 @@ class IncidentRAG:
             "rca": rca,
         }
 
-    def _parse_rca(self, raw: str) -> Dict[str, Any]:
+    def _parse_rca(self, raw: str) -> dict[str, Any]:
         try:
             return json.loads(raw)
         except json.JSONDecodeError:
@@ -143,7 +141,7 @@ class IncidentRAG:
         predicted_value: float,
         expected_value: float,
         z_score: float,
-        similar: List[Incident],
+        similar: list[Incident],
     ) -> str:
         lines = [
             "## Current Anomaly",

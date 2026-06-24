@@ -11,23 +11,23 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from datetime import datetime, timezone, timedelta
-from typing import TYPE_CHECKING, Dict, List, Optional
+from datetime import UTC, datetime, timedelta
+from typing import TYPE_CHECKING
 
 import numpy as np
 
+from ..alerter.webhook import WebhookAlerter
+from ..anomaly.isolation_forest import IsolationForestDetector
+from ..anomaly.predictor import AnomalyPrediction, AnomalyPredictor
+from ..anomaly.stl_detector import STLAnomalyDetector
 from ..config import settings
 from ..models.forecast import ForecastResult, ModelType, PredictionPoint
-from ..anomaly.predictor import AnomalyPredictor, AnomalyPrediction
-from ..anomaly.isolation_forest import IsolationForestDetector
-from ..anomaly.stl_detector import STLAnomalyDetector
-from ..alerter.webhook import WebhookAlerter
+from ..store.forecast_store import ForecastStore
 from .baseline_store import BaselineStore
 from .feature_store import FeatureStore
 from .metric_feature_store import MetricFeatureStore
+from .prom_metrics import feature_store_services, forecast_cycle_duration, forecast_cycles
 from .selector import select_model
-from .prom_metrics import forecast_cycles, forecast_cycle_duration, feature_store_services
-from ..store.forecast_store import ForecastStore
 
 if TYPE_CHECKING:
     from ..rag.incident_store import IncidentStore
@@ -69,9 +69,9 @@ class Forecaster:
         forecast_store: ForecastStore,
         anomaly_predictor: AnomalyPredictor,
         alerter: WebhookAlerter,
-        metric_feature_store: Optional[MetricFeatureStore] = None,
-        incident_store: Optional["IncidentStore"] = None,
-        accuracy_tracker: Optional["AccuracyTracker"] = None,
+        metric_feature_store: MetricFeatureStore | None = None,
+        incident_store: IncidentStore | None = None,
+        accuracy_tracker: AccuracyTracker | None = None,
         interval_seconds: int = settings.FORECAST_INTERVAL_SECONDS,
         horizon_minutes: int = settings.FORECAST_HORIZON_MINUTES,
         window_minutes: int = settings.FEATURE_WINDOW_MINUTES,
@@ -103,7 +103,7 @@ class Forecaster:
             threshold_z=settings.STL_THRESHOLD_Z,
         )
 
-        self._task: Optional[asyncio.Task] = None
+        self._task: asyncio.Task | None = None
         self._running = False
 
     # ------------------------------------------------------------------
@@ -205,7 +205,7 @@ class Forecaster:
         # Evict stale forecasts
         await self._forecast_store.evict_expired()
 
-    async def _run_isolation_forest_cycle(self, services: List[str]) -> None:
+    async def _run_isolation_forest_cycle(self, services: list[str]) -> None:
         """Run IsolationForest on each service's RED metric vectors."""
         loop = asyncio.get_event_loop()
         sem = asyncio.Semaphore(4)
@@ -231,10 +231,10 @@ class Forecaster:
 
         await asyncio.gather(*[_detect(s) for s in services], return_exceptions=True)
 
-    async def _run_stl_cycle(self, services: List[str]) -> None:
+    async def _run_stl_cycle(self, services: list[str]) -> None:
         """Run STL decomposition anomaly detection on each (service, metric)."""
         loop = asyncio.get_event_loop()
-        now = datetime.now(tz=timezone.utc)
+        now = datetime.now(tz=UTC)
         sem = asyncio.Semaphore(4)
 
         async def _detect(service: str, metric: str) -> None:
@@ -332,7 +332,7 @@ class Forecaster:
 
         last_ts = timestamps[-1]
         if last_ts.tzinfo is None:
-            last_ts = last_ts.replace(tzinfo=timezone.utc)
+            last_ts = last_ts.replace(tzinfo=UTC)
 
         steps = self.horizon_minutes
         future_ts = [last_ts + timedelta(minutes=i + 1) for i in range(steps)]
@@ -347,7 +347,7 @@ class Forecaster:
             return
 
         confidences = np.exp(-np.arange(steps) / steps)
-        prediction_points: List[PredictionPoint] = [
+        prediction_points: list[PredictionPoint] = [
             PredictionPoint(
                 timestamp=future_ts[i],
                 predicted=float(predicted[i]),
@@ -373,7 +373,7 @@ class Forecaster:
                 service_name=service,
                 metric_name=metric_name,
                 model_used=model_type,
-                generated_at=datetime.now(tz=timezone.utc),
+                generated_at=datetime.now(tz=UTC),
                 horizon_minutes=self.horizon_minutes,
                 predictions=prediction_points,
                 mse=float(mse) if mse != float("inf") else None,
@@ -385,7 +385,7 @@ class Forecaster:
             service_name=service,
             metric_name=metric_name,
             model_used=model_type,
-            generated_at=datetime.now(tz=timezone.utc),
+            generated_at=datetime.now(tz=UTC),
             horizon_minutes=self.horizon_minutes,
             predictions=prediction_points,
             mse=float(mse) if mse != float("inf") else None,
@@ -426,8 +426,7 @@ class Forecaster:
         for pt in points:
             ts = pt.timestamp
             if ts.tzinfo is None:
-                from datetime import timezone as _tz
-                ts = ts.replace(tzinfo=_tz.utc)
+                ts = ts.replace(tzinfo=UTC)
             self._baseline_store.update(service, metric, ts, pt.value)
 
         # Run in executor to avoid blocking event loop for statsmodels
@@ -448,7 +447,7 @@ class Forecaster:
         # Build future timestamps (1-minute steps)
         last_ts = timestamps[-1]
         if last_ts.tzinfo is None:
-            last_ts = last_ts.replace(tzinfo=timezone.utc)
+            last_ts = last_ts.replace(tzinfo=UTC)
 
         steps = self.horizon_minutes
         future_ts = [
@@ -469,7 +468,7 @@ class Forecaster:
         # Compute per-point confidence (decays with horizon)
         confidences = np.exp(-np.arange(steps) / steps)
 
-        prediction_points: List[PredictionPoint] = []
+        prediction_points: list[PredictionPoint] = []
         for i in range(steps):
             prediction_points.append(
                 PredictionPoint(
@@ -498,7 +497,7 @@ class Forecaster:
                 service_name=service,
                 metric_name=metric,
                 model_used=model_type,
-                generated_at=datetime.now(tz=timezone.utc),
+                generated_at=datetime.now(tz=UTC),
                 horizon_minutes=self.horizon_minutes,
                 predictions=prediction_points,
                 mse=float(mse) if mse != float("inf") else None,
@@ -514,7 +513,7 @@ class Forecaster:
             service_name=service,
             metric_name=metric,
             model_used=model_type,
-            generated_at=datetime.now(tz=timezone.utc),
+            generated_at=datetime.now(tz=UTC),
             horizon_minutes=self.horizon_minutes,
             predictions=prediction_points,
             mse=float(mse) if mse != float("inf") else None,
@@ -536,7 +535,7 @@ class Forecaster:
                 predicted_value=float(predicted[0]),
             )
             for pt in points:
-                actual_ts = pt.timestamp if pt.timestamp.tzinfo else pt.timestamp.replace(tzinfo=timezone.utc)
+                actual_ts = pt.timestamp if pt.timestamp.tzinfo else pt.timestamp.replace(tzinfo=UTC)
                 await self._accuracy_tracker.record_actual(service, metric, actual_ts, pt.value)
 
         logger.debug(

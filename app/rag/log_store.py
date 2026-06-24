@@ -13,8 +13,7 @@ import logging
 import uuid
 from collections import deque
 from dataclasses import dataclass
-from datetime import datetime, timezone, timedelta
-from typing import Deque, List, Optional
+from datetime import UTC, datetime, timedelta
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +28,7 @@ class LogRecord:
     severity: str
     body: str
     timestamp: datetime
-    trace_id: Optional[str]
+    trace_id: str | None
     document: str            # the text that was embedded / indexed
 
 
@@ -41,7 +40,7 @@ class LogStore:
     """
 
     def __init__(self, persist_directory: str = "/tmp/javi_logs") -> None:
-        self._memory: Deque[LogRecord] = deque(maxlen=_MAX_MEMORY)
+        self._memory: deque[LogRecord] = deque(maxlen=_MAX_MEMORY)
         self._chroma_collection = None
 
         try:
@@ -76,13 +75,13 @@ class LogStore:
         service_name: str,
         severity: str,
         body: str,
-        timestamp: Optional[datetime] = None,
-        trace_id: Optional[str] = None,
-        span_id: Optional[str] = None,
+        timestamp: datetime | None = None,
+        trace_id: str | None = None,
+        span_id: str | None = None,
     ) -> LogRecord:
         """Store a single log record."""
         if timestamp is None:
-            timestamp = datetime.now(tz=timezone.utc)
+            timestamp = datetime.now(tz=UTC)
 
         log_id = str(uuid.uuid4())
         # Build a rich text document for embedding / search
@@ -130,9 +129,9 @@ class LogStore:
     def search(
         self,
         query: str,
-        service_name: Optional[str] = None,
+        service_name: str | None = None,
         top_k: int = 10,
-    ) -> List[LogRecord]:
+    ) -> list[LogRecord]:
         """Return up to *top_k* log records most relevant to *query*.
 
         Uses ChromaDB vector search when available.  Falls back to
@@ -152,15 +151,15 @@ class LogStore:
                 if where:
                     kwargs["where"] = where
                 results = self._chroma_collection.query(**kwargs)
-                records: List[LogRecord] = []
+                records: list[LogRecord] = []
                 docs = results.get("documents", [[]])[0]
                 metas = results.get("metadatas", [[]])[0]
-                for doc, meta in zip(docs, metas):
+                for doc, meta in zip(docs, metas, strict=True):
                     ts_str = meta.get("timestamp", "")
                     try:
                         ts = datetime.fromisoformat(ts_str)
                     except ValueError:
-                        ts = datetime.now(tz=timezone.utc)
+                        ts = datetime.now(tz=UTC)
                     records.append(
                         LogRecord(
                             id="",
@@ -187,12 +186,12 @@ class LogStore:
 
     def get_recent(
         self,
-        service_name: Optional[str] = None,
+        service_name: str | None = None,
         since_minutes: int = 60,
         limit: int = 100,
-    ) -> List[LogRecord]:
+    ) -> list[LogRecord]:
         """Return recent log records, optionally filtered by service."""
-        cutoff = datetime.now(tz=timezone.utc) - timedelta(minutes=since_minutes)
+        cutoff = datetime.now(tz=UTC) - timedelta(minutes=since_minutes)
         results = [
             r for r in self._memory
             if r.timestamp >= cutoff

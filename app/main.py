@@ -22,42 +22,42 @@ from __future__ import annotations
 
 import logging
 import sys
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import AsyncIterator
 
 import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from .api.router import api_router
-from .api.health import set_dependencies, mark_ready
-from .anomaly.predictor import AnomalyPredictor
 from .alerter.webhook import WebhookAlerter
+from .anomaly.predictor import AnomalyPredictor
+from .api.health import mark_ready, set_dependencies
+from .api.router import api_router
 from .config import settings
 from .consumer.deploy_event_handler import DeployEventHandler
 from .consumer.event_handler import EventHandler
 from .consumer.kafka_consumer import KafkaConsumerService
 from .consumer.log_event_handler import LogEventHandler
 from .consumer.metric_event_handler import MetricEventHandler
+from .engine.accuracy_tracker import AccuracyTracker
+from .engine.alert_store import AlertStore
+from .engine.anomaly_clusterer import AnomalyClusterer
+from .engine.anomaly_detector import AnomalyDetector
+from .engine.baseline_computer import BaselineComputer
 from .engine.burn_rate_analyzer import BurnRateAnalyzer
 from .engine.dependency_map import DependencyMap
 from .engine.deployment_store import DeploymentStore
 from .engine.feature_store import FeatureStore
-from .engine.service_registry import ServiceRegistry
 from .engine.feedback_store import FeedbackStore as AlertFeedbackStore
 from .engine.forecaster import Forecaster
 from .engine.granger_analyzer import GrangerAnalyzer
 from .engine.jvm_analyzer import JvmAnalyzer
 from .engine.jvm_feature_store import JvmFeatureStore
 from .engine.metric_feature_store import MetricFeatureStore
+from .engine.rca_engine import RCAEngine
+from .engine.service_registry import ServiceRegistry
 from .engine.span_topology import SpanTopologyTracker
 from .engine.var_forecaster import VarForecaster
-from .engine.accuracy_tracker import AccuracyTracker
-from .engine.alert_store import AlertStore
-from .engine.anomaly_clusterer import AnomalyClusterer
-from .engine.baseline_computer import BaselineComputer
-from .engine.anomaly_detector import AnomalyDetector
-from .engine.rca_engine import RCAEngine
 from .store.clickhouse import ClickHouseStore
 from .store.forecast_store import ForecastStore
 

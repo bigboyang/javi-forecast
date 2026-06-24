@@ -8,7 +8,6 @@ POST /v1/metrics/jvm  – JVM metric snapshots from javi-agent JvmSnapshotSender
 from __future__ import annotations
 
 import logging
-from typing import Dict
 
 from fastapi import APIRouter, HTTPException, Request, status
 
@@ -40,7 +39,7 @@ def _get_event_handler(request: Request):
 async def ingest_spans(
     batch: SpanBatch,
     request: Request,
-) -> Dict[str, int]:
+) -> dict[str, int]:
     """Accept a batch of OTel span events from javi-collector.
 
     Called by javi-collector's ``ForecastConsumer`` which POSTs
@@ -73,7 +72,7 @@ async def ingest_spans(
 async def ingest_single_span(
     span: SpanEvent,
     request: Request,
-) -> Dict[str, int]:
+) -> dict[str, int]:
     """Accept a single span event (convenience alias)."""
     handler = _get_event_handler(request)
     await handler.handle(span)
@@ -88,7 +87,7 @@ async def ingest_single_span(
 async def ingest_metrics(
     batch: MetricEventBatch,
     request: Request,
-) -> Dict[str, int]:
+) -> dict[str, int]:
     """Accept a batch of OTel metric data-points from javi-collector.
 
     Called by javi-collector's ``MetricForecastConsumer`` which POSTs
@@ -127,7 +126,7 @@ async def ingest_metrics(
 async def ingest_single_metric(
     event: MetricEvent,
     request: Request,
-) -> Dict[str, int]:
+) -> dict[str, int]:
     """Accept a single metric event (convenience alias)."""
     metric_handler = getattr(request.app.state, "metric_event_handler", None)
     if metric_handler is None:
@@ -147,7 +146,7 @@ async def ingest_single_metric(
 async def ingest_jvm_metrics(
     batch: JvmMetricBatch,
     request: Request,
-) -> Dict[str, int]:
+) -> dict[str, int]:
     """Accept a batch of JVM metric snapshots from JvmSnapshotSender.
 
     Each snapshot contains heap usage, GC deltas, thread counts, and

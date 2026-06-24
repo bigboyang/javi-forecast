@@ -9,8 +9,7 @@ GET /api/forecast/anomalies               – services with predicted anomalies
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone, timedelta
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, Request, status
 
@@ -18,7 +17,6 @@ from ..models.forecast import (
     CapacityForecast,
     ForecastRequest,
     ForecastResult,
-    ModelType,
 )
 
 logger = logging.getLogger(__name__)
@@ -55,10 +53,10 @@ def _get_feature_store(request: Request):
 
 @router.get(
     "/red",
-    response_model=List[ForecastResult],
+    response_model=list[ForecastResult],
     summary="Get latest forecasts for all services and metrics",
 )
-async def get_all_forecasts(request: Request) -> List[ForecastResult]:
+async def get_all_forecasts(request: Request) -> list[ForecastResult]:
     """Return the latest non-expired forecast for every (service, metric) pair."""
     forecast_store = _get_forecast_store(request)
     results = await forecast_store.list_all()
@@ -67,7 +65,7 @@ async def get_all_forecasts(request: Request) -> List[ForecastResult]:
 
 @router.get(
     "/service/{service_name}",
-    response_model=List[ForecastResult],
+    response_model=list[ForecastResult],
     summary="Get forecast for a specific service",
 )
 async def get_service_forecast(
@@ -78,7 +76,7 @@ async def get_service_forecast(
         description="Metric to forecast (rate|error_rate|p50_ms|p95_ms|p99_ms). "
         "Pass 'all' to get all metrics.",
     ),
-) -> List[ForecastResult]:
+) -> list[ForecastResult]:
     """Return forecast(s) for *service_name*.
 
     * ``metric=p95_ms`` (default) – single metric
@@ -93,7 +91,7 @@ async def get_service_forecast(
             detail=f"Unknown metric '{metric}'. Must be one of {_METRIC_NAMES} or 'all'",
         )
 
-    results: List[ForecastResult] = []
+    results: list[ForecastResult] = []
     for m in target_metrics:
         result = await forecast_store.get(service_name, m)
         if result:
@@ -109,17 +107,17 @@ async def get_service_forecast(
 
 @router.get(
     "/capacity",
-    response_model=List[CapacityForecast],
+    response_model=list[CapacityForecast],
     summary="Capacity planning forecast for all services",
 )
-async def get_capacity_forecast(request: Request) -> List[CapacityForecast]:
+async def get_capacity_forecast(request: Request) -> list[CapacityForecast]:
     """Return capacity-planning forecasts showing predicted peak rates and
     saturation risk per service."""
     forecast_store = _get_forecast_store(request)
     feature_store = _get_feature_store(request)
 
     services = feature_store.get_services()
-    capacity_forecasts: List[CapacityForecast] = []
+    capacity_forecasts: list[CapacityForecast] = []
 
     for service in services:
         rate_forecast = await forecast_store.get(service, "rate")
@@ -177,16 +175,16 @@ async def get_capacity_forecast(request: Request) -> List[CapacityForecast]:
 
 @router.get(
     "/anomalies",
-    response_model=List[ForecastResult],
+    response_model=list[ForecastResult],
     summary="Services with predicted anomalies",
 )
 async def get_predicted_anomalies(
     request: Request,
-    severity: Optional[str] = Query(
+    severity: str | None = Query(
         default=None,
         description="Filter by severity: warn | critical",
     ),
-) -> List[ForecastResult]:
+) -> list[ForecastResult]:
     """Return forecast results where an anomaly is predicted.
 
     Optional *severity* query parameter filters to ``warn`` or
@@ -214,13 +212,13 @@ async def get_predicted_anomalies(
 
 @router.post(
     "/run",
-    response_model=Dict[str, Any],
+    response_model=dict[str, Any],
     summary="Trigger an on-demand forecast cycle",
 )
 async def trigger_forecast(
     req: ForecastRequest,
     request: Request,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Trigger an immediate forecast for the specified service/metric.
 
     Useful for testing or on-demand refresh outside the scheduled cycle.

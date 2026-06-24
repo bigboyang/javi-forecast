@@ -1,5 +1,4 @@
-from pydantic_settings import BaseSettings
-from typing import Optional
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
@@ -34,8 +33,8 @@ class Settings(BaseSettings):
     DEFAULT_MODEL: str = "ewma"              # ewma | arima | holtwinters | auto
 
     # Alerting
-    ALERT_WEBHOOK_URL: Optional[str] = None
-    ALERT_SLACK_WEBHOOK_URL: Optional[str] = None
+    ALERT_WEBHOOK_URL: str | None = None
+    ALERT_SLACK_WEBHOOK_URL: str | None = None
     ALERT_FORECAST_THRESHOLD: float = 2.0    # Z-score threshold for forecast alerts
 
     # Backfill
@@ -67,7 +66,7 @@ class Settings(BaseSettings):
 
     # RAG / LLM (Text-to-SQL)
     RAG_ENABLED: bool = False
-    ANTHROPIC_API_KEY: Optional[str] = None
+    ANTHROPIC_API_KEY: str | None = None
     LLM_MODEL: str = "claude-sonnet-4-6"   # Anthropic model for SQL generation
     RAG_MAX_ROWS: int = 500                 # cap rows returned from generated SQL
     RAG_SQL_TIMEOUT_SECONDS: int = 30      # max ClickHouse query time for RAG
@@ -93,7 +92,7 @@ class Settings(BaseSettings):
 
     # Multi-instance / HA
     INSTANCE_ID: str = "default"           # unique ID per replica; used in log/metric labels
-    REDIS_URL: Optional[str] = None        # e.g. redis://localhost:6379 – set for multi-instance FeatureStore sharing
+    REDIS_URL: str | None = None        # e.g. redis://localhost:6379 – set for multi-instance FeatureStore sharing
 
     # Baseline computer (ported from collector)
     BASELINE_ENABLED: bool = True
@@ -112,8 +111,7 @@ class Settings(BaseSettings):
     RCA_ENABLED: bool = True
     RCA_INTERVAL_SECONDS: int = 120        # polling interval for new anomalies
 
-    class Config:
-        env_file = ".env"
+    model_config = SettingsConfigDict(env_file=".env")
 
 
 settings = Settings()

@@ -8,7 +8,6 @@ GET /api/topology/spans/stats    – index / edge counts
 from __future__ import annotations
 
 from datetime import datetime
-from typing import List, Optional
 
 from fastapi import APIRouter, HTTPException, Request, status
 from pydantic import BaseModel
@@ -32,7 +31,7 @@ class TopologyEdgeResponse(BaseModel):
 
 class TopologyResponse(BaseModel):
     edge_count: int
-    edges: List[TopologyEdgeResponse]
+    edges: list[TopologyEdgeResponse]
 
 
 class TopologyStatsResponse(BaseModel):

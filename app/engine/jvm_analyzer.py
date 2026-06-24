@@ -23,8 +23,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timezone, timedelta
-from typing import Dict, List, Optional, Tuple
+from datetime import UTC, datetime, timedelta
 
 import numpy as np
 
@@ -77,7 +76,7 @@ class JvmAnalyzer:
         self.oom_warn_minutes = oom_warn_minutes
         self.gc_overhead_warn = gc_overhead_warn
 
-        self._task: Optional[asyncio.Task] = None
+        self._task: asyncio.Task | None = None
         self._running = False
 
     # ------------------------------------------------------------------
@@ -128,10 +127,10 @@ class JvmAnalyzer:
             await self._analyse_service(service, snapshots)
 
     async def _analyse_service(
-        self, service: str, snapshots: List[JvmMetricEvent]
+        self, service: str, snapshots: list[JvmMetricEvent]
     ) -> None:
         loop = asyncio.get_event_loop()
-        alerts: List[AnomalyPrediction] = await loop.run_in_executor(
+        alerts: list[AnomalyPrediction] = await loop.run_in_executor(
             None, lambda: self._compute_signals(service, snapshots)
         )
         for alert in alerts:
@@ -142,9 +141,9 @@ class JvmAnalyzer:
     # ------------------------------------------------------------------
 
     def _compute_signals(
-        self, service: str, snapshots: List[JvmMetricEvent]
-    ) -> List[AnomalyPrediction]:
-        alerts: List[AnomalyPrediction] = []
+        self, service: str, snapshots: list[JvmMetricEvent]
+    ) -> list[AnomalyPrediction]:
+        alerts: list[AnomalyPrediction] = []
         for fn in (self._check_oom, self._check_gc_storm, self._check_thread_leak):
             result = fn(service, snapshots)
             if result is not None:
@@ -156,11 +155,11 @@ class JvmAnalyzer:
     # ------------------------------------------------------------------
 
     def _check_oom(
-        self, service: str, snapshots: List[JvmMetricEvent]
-    ) -> Optional[AnomalyPrediction]:
+        self, service: str, snapshots: list[JvmMetricEvent]
+    ) -> AnomalyPrediction | None:
         """Predict time to OOM via linear regression on heap usage ratio."""
-        ratios: List[float] = []
-        timestamps: List[float] = []  # seconds since first snapshot
+        ratios: list[float] = []
+        timestamps: list[float] = []  # seconds since first snapshot
 
         t0 = snapshots[0].timestamp_nano / 1e9
         for s in snapshots:
@@ -193,7 +192,7 @@ class JvmAnalyzer:
             if time_to_oom_minutes < (self.oom_warn_minutes / 2)
             else "warn"
         )
-        now = datetime.now(tz=timezone.utc)
+        now = datetime.now(tz=UTC)
         predicted_at = now + timedelta(seconds=max(0.0, time_to_oom_seconds))
 
         logger.warning(
@@ -219,8 +218,8 @@ class JvmAnalyzer:
     # ------------------------------------------------------------------
 
     def _check_gc_storm(
-        self, service: str, snapshots: List[JvmMetricEvent]
-    ) -> Optional[AnomalyPrediction]:
+        self, service: str, snapshots: list[JvmMetricEvent]
+    ) -> AnomalyPrediction | None:
         """Detect GC storm via Z-score on gc_pause_ms_total_delta."""
         pauses = np.array(
             [s.gc_pause_ms_total_delta for s in snapshots], dtype=float
@@ -245,7 +244,7 @@ class JvmAnalyzer:
             if abs(z) >= (_GC_STORM_Z + 1) or gc_overhead > (self.gc_overhead_warn * 2)
             else "warn"
         )
-        now = datetime.now(tz=timezone.utc)
+        now = datetime.now(tz=UTC)
 
         logger.warning(
             "GC storm detected service=%s gc_pause_ms=%.1f mean=%.1f z=%.2f "
@@ -273,8 +272,8 @@ class JvmAnalyzer:
     # ------------------------------------------------------------------
 
     def _check_thread_leak(
-        self, service: str, snapshots: List[JvmMetricEvent]
-    ) -> Optional[AnomalyPrediction]:
+        self, service: str, snapshots: list[JvmMetricEvent]
+    ) -> AnomalyPrediction | None:
         """Detect thread leak via monotonic growth and median ratio."""
         counts = np.array([s.thread_count for s in snapshots], dtype=float)
         if len(counts) < _MIN_SNAPSHOTS * 2:
@@ -300,7 +299,7 @@ class JvmAnalyzer:
         severity = (
             "critical" if ratio > (_THREAD_GROWTH_RATIO * 1.5) else "warn"
         )
-        now = datetime.now(tz=timezone.utc)
+        now = datetime.now(tz=UTC)
 
         logger.warning(
             "Thread leak suspected service=%s old_median=%.0f recent_median=%.0f "

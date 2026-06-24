@@ -16,8 +16,8 @@ from __future__ import annotations
 
 import threading
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from datetime import UTC, datetime
+from typing import Any
 
 from ..models.span import SpanEvent
 
@@ -37,15 +37,15 @@ _KNOWN_RESOURCE_KEYS = frozenset(
 @dataclass
 class ServiceMetadata:
     service_name: str
-    service_version: Optional[str] = None
-    deployment_environment: Optional[str] = None
-    k8s_pod_name: Optional[str] = None
-    k8s_namespace: Optional[str] = None
-    cloud_region: Optional[str] = None
-    host_name: Optional[str] = None
-    extra: Dict[str, Any] = field(default_factory=dict)
+    service_version: str | None = None
+    deployment_environment: str | None = None
+    k8s_pod_name: str | None = None
+    k8s_namespace: str | None = None
+    cloud_region: str | None = None
+    host_name: str | None = None
+    extra: dict[str, Any] = field(default_factory=dict)
     last_seen: datetime = field(
-        default_factory=lambda: datetime.now(tz=timezone.utc)
+        default_factory=lambda: datetime.now(tz=UTC)
     )
 
 
@@ -59,7 +59,7 @@ class ServiceRegistry:
     """
 
     def __init__(self) -> None:
-        self._registry: Dict[str, ServiceMetadata] = {}
+        self._registry: dict[str, ServiceMetadata] = {}
         self._lock = threading.Lock()
 
     # ------------------------------------------------------------------
@@ -99,18 +99,18 @@ class ServiceRegistry:
                 if k not in _KNOWN_RESOURCE_KEYS:
                     meta.extra[k] = v
 
-            meta.last_seen = datetime.now(tz=timezone.utc)
+            meta.last_seen = datetime.now(tz=UTC)
 
     # ------------------------------------------------------------------
     # Read
     # ------------------------------------------------------------------
 
-    def get(self, service_name: str) -> Optional[ServiceMetadata]:
+    def get(self, service_name: str) -> ServiceMetadata | None:
         """Return metadata for a single service, or None if unknown."""
         with self._lock:
             return self._registry.get(service_name)
 
-    def get_all(self) -> List[ServiceMetadata]:
+    def get_all(self) -> list[ServiceMetadata]:
         """Return metadata for all registered services."""
         with self._lock:
             return list(self._registry.values())

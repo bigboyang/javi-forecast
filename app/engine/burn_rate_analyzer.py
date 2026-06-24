@@ -19,8 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timezone
-from typing import Optional
+from datetime import UTC, datetime
 
 from ..alerter.webhook import WebhookAlerter
 from ..anomaly.predictor import AnomalyPrediction
@@ -73,7 +72,7 @@ class BurnRateAnalyzer:
         self.ticket_burn_rate = ticket_burn_rate
         self.interval_seconds = interval_seconds
 
-        self._task: Optional[asyncio.Task] = None
+        self._task: asyncio.Task | None = None
         self._running = False
 
     # ------------------------------------------------------------------
@@ -132,7 +131,7 @@ class BurnRateAnalyzer:
     # Burn rate computation (sync, runs in executor)
     # ------------------------------------------------------------------
 
-    def _compute_burn_rate(self, service: str) -> Optional[AnomalyPrediction]:
+    def _compute_burn_rate(self, service: str) -> AnomalyPrediction | None:
         fast_pts = self._store.get_series(
             service, "error_rate", window_minutes=_FAST_WINDOW_MINUTES
         )
@@ -157,7 +156,7 @@ class BurnRateAnalyzer:
         fast_burn = fast_mean / self.slo_error_budget
         slow_burn = slow_mean / self.slo_error_budget
 
-        severity: Optional[str] = None
+        severity: str | None = None
         if fast_burn >= self.page_burn_rate and slow_burn >= self.page_burn_rate:
             severity = "critical"
         elif fast_burn >= self.ticket_burn_rate and slow_burn >= self.ticket_burn_rate:
@@ -166,7 +165,7 @@ class BurnRateAnalyzer:
         if severity is None:
             return None
 
-        now = datetime.now(tz=timezone.utc)
+        now = datetime.now(tz=UTC)
         logger.warning(
             "SLO burn rate alert service=%s fast_burn=%.2f slow_burn=%.2f "
             "fast_error=%.4f slow_error=%.4f severity=%s",

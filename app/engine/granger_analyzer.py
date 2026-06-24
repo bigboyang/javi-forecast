@@ -19,7 +19,6 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import datetime
-from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 
@@ -71,7 +70,7 @@ class GrangerAnalyzer:
         self.p_threshold = p_threshold
         self.maxlag = maxlag
 
-        self._task: Optional[asyncio.Task] = None
+        self._task: asyncio.Task | None = None
         self._running = False
 
     # ------------------------------------------------------------------
@@ -116,7 +115,7 @@ class GrangerAnalyzer:
             return
 
         # Collect aligned error_rate series (last 60 minutes)
-        service_data: Dict[str, List[Tuple[datetime, float]]] = {}
+        service_data: dict[str, list[tuple[datetime, float]]] = {}
         for service in services:
             pts = self._store.get_series(service, "error_rate", window_minutes=60)
             if len(pts) >= _MIN_POINTS:
@@ -135,7 +134,7 @@ class GrangerAnalyzer:
     # ------------------------------------------------------------------
 
     def _test_all_pairs(
-        self, service_data: Dict[str, List[Tuple[datetime, float]]]
+        self, service_data: dict[str, list[tuple[datetime, float]]]
     ) -> None:
         try:
             from statsmodels.tsa.stattools import grangercausalitytests
@@ -152,7 +151,7 @@ class GrangerAnalyzer:
         if len(common_ts) < _MIN_POINTS:
             return
 
-        aligned: Dict[str, np.ndarray] = {}
+        aligned: dict[str, np.ndarray] = {}
         for name in names:
             lookup = {ts: v for ts, v in service_data[name]}
             aligned[name] = np.array([lookup[ts] for ts in common_ts], dtype=float)

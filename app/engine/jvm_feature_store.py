@@ -10,8 +10,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections import defaultdict, deque
-from datetime import datetime, timezone, timedelta
-from typing import Deque, Dict, List, Optional
+from datetime import UTC, datetime, timedelta
 
 from ..models.jvm import JvmMetricEvent
 
@@ -32,10 +31,10 @@ class JvmFeatureStore:
     def __init__(self, maxlen: int = _DEFAULT_MAXLEN) -> None:
         self.maxlen = maxlen
         # service_name → deque[JvmMetricEvent]
-        self._series: Dict[str, Deque[JvmMetricEvent]] = defaultdict(
+        self._series: dict[str, deque[JvmMetricEvent]] = defaultdict(
             lambda: deque(maxlen=self.maxlen)
         )
-        self._locks: Dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
+        self._locks: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
 
     async def update(self, event: JvmMetricEvent) -> None:
         """Append a single JVM metric snapshot."""
@@ -51,8 +50,8 @@ class JvmFeatureStore:
     def get_snapshots(
         self,
         service_name: str,
-        window_minutes: Optional[int] = None,
-    ) -> List[JvmMetricEvent]:
+        window_minutes: int | None = None,
+    ) -> list[JvmMetricEvent]:
         """Return JVM snapshots for *service_name*.
 
         Parameters
@@ -63,20 +62,20 @@ class JvmFeatureStore:
         entries = list(self._series.get(service_name, []))
         if window_minutes is not None:
             cutoff_ns = int(
-                (datetime.now(tz=timezone.utc) - timedelta(minutes=window_minutes))
+                (datetime.now(tz=UTC) - timedelta(minutes=window_minutes))
                 .timestamp() * 1e9
             )
             entries = [e for e in entries if e.timestamp_nano >= cutoff_ns]
         return entries
 
-    def get_latest(self, service_name: str) -> Optional[JvmMetricEvent]:
+    def get_latest(self, service_name: str) -> JvmMetricEvent | None:
         """Return the most recent snapshot for *service_name*, or None."""
         series = self._series.get(service_name)
         if not series:
             return None
         return series[-1]
 
-    def get_services(self) -> List[str]:
+    def get_services(self) -> list[str]:
         """Return all service names that have at least one snapshot."""
         return [s for s, q in self._series.items() if len(q) > 0]
 

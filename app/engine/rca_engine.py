@@ -15,7 +15,7 @@ import asyncio
 import json
 import logging
 import uuid
-from datetime import datetime, timezone, timedelta
+from datetime import UTC, datetime, timedelta
 
 from ..config import settings
 from .prom_metrics import rca_reports_generated
@@ -138,7 +138,7 @@ class RCAEngine:
             "nearby_deployments": _to_json(deployments),
             "hypothesis": hypothesis,
             "llm_analysis": llm_analysis,
-            "created_at": datetime.now(tz=timezone.utc),
+            "created_at": datetime.now(tz=UTC),
         }
 
     async def _run_llm_analysis(self, a: dict) -> str:

@@ -2,19 +2,19 @@
 
 from fastapi import APIRouter
 
+from .alerts import router as alerts_router
+from .dependency import router as dependency_router
+from .events import router as events_router
+from .feedback import router as feedback_router
+from .forecast import router as forecast_router
 from .health import router as health_router
 from .ingest import router as ingest_router
-from .forecast import router as forecast_router
-from .metrics import router as metrics_router
 from .jvm import router as jvm_router
-from .dependency import router as dependency_router
-from .rag import router as rag_router
-from .topology import router as topology_router
-from .feedback import router as feedback_router
-from .registry import router as registry_router
-from .events import router as events_router
-from .alerts import router as alerts_router
+from .metrics import router as metrics_router
 from .prom import router as prom_router
+from .rag import router as rag_router
+from .registry import router as registry_router
+from .topology import router as topology_router
 
 api_router = APIRouter()
 

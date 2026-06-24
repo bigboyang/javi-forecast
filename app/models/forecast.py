@@ -1,10 +1,10 @@
-from pydantic import BaseModel
-from typing import List, Optional
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
+
+from pydantic import BaseModel
 
 
-class ModelType(str, Enum):
+class ModelType(StrEnum):
     EWMA = "ewma"
     ARIMA = "arima"
     HOLTWINTERS = "holtwinters"
@@ -26,10 +26,10 @@ class ForecastResult(BaseModel):
     model_used: ModelType
     generated_at: datetime
     horizon_minutes: int
-    predictions: List[PredictionPoint]
-    mse: Optional[float] = None
+    predictions: list[PredictionPoint]
+    mse: float | None = None
     is_anomaly_predicted: bool = False
-    anomaly_severity: Optional[str] = None   # warn | critical
+    anomaly_severity: str | None = None   # warn | critical
 
 
 class ForecastRequest(BaseModel):

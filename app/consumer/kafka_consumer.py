@@ -31,7 +31,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from typing import Optional, Set
 
 from ..config import settings
 from ..engine.prom_metrics import kafka_consumer_lag, kafka_message_errors, kafka_messages_processed
@@ -91,15 +90,15 @@ class KafkaConsumerService:
     def __init__(
         self,
         event_handler: EventHandler,
-        metric_handler: Optional[MetricEventHandler] = None,
-        log_handler: Optional[LogEventHandler] = None,
-        deploy_handler: Optional[DeployEventHandler] = None,
-        brokers: Optional[str] = None,
-        topics: Optional[str] = None,
-        metrics_topics: Optional[str] = None,
-        log_topics: Optional[str] = None,
-        deploy_topics: Optional[str] = None,
-        group_id: Optional[str] = None,
+        metric_handler: MetricEventHandler | None = None,
+        log_handler: LogEventHandler | None = None,
+        deploy_handler: DeployEventHandler | None = None,
+        brokers: str | None = None,
+        topics: str | None = None,
+        metrics_topics: str | None = None,
+        log_topics: str | None = None,
+        deploy_topics: str | None = None,
+        group_id: str | None = None,
     ) -> None:
         self._handler = event_handler
         self._metric_handler = metric_handler
@@ -128,12 +127,12 @@ class KafkaConsumerService:
             if t.strip()
         ]
 
-        self._span_topics: Set[str] = set(span_topics)
-        self._metric_topics: Set[str] = set(metric_topics_list)
-        self._log_topics: Set[str] = set(log_topics_list)
-        self._deploy_topics: Set[str] = set(deploy_topics_list)
+        self._span_topics: set[str] = set(span_topics)
+        self._metric_topics: set[str] = set(metric_topics_list)
+        self._log_topics: set[str] = set(log_topics_list)
+        self._deploy_topics: set[str] = set(deploy_topics_list)
         # deduplicate while preserving order: spans, then metrics, then logs, then deploys
-        seen: Set[str] = set(span_topics)
+        seen: set[str] = set(span_topics)
         extra_metrics = [t for t in metric_topics_list if t not in seen]
         seen.update(extra_metrics)
         extra_logs = [t for t in log_topics_list if t not in seen]
@@ -143,8 +142,8 @@ class KafkaConsumerService:
 
         self._group_id = group_id or settings.KAFKA_GROUP_ID
         self._consumer = None
-        self._task: Optional[asyncio.Task] = None
-        self._lag_task: Optional[asyncio.Task] = None
+        self._task: asyncio.Task | None = None
+        self._lag_task: asyncio.Task | None = None
         self._running = False
 
     # ------------------------------------------------------------------

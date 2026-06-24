@@ -12,10 +12,8 @@ At most one alert per service per metric per *cooldown* window
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
-from datetime import datetime, timezone, timedelta
-from typing import Dict, Optional, Tuple
+from datetime import UTC, datetime
 
 import httpx
 
@@ -39,9 +37,9 @@ class WebhookAlerter:
 
     def __init__(self, cooldown_seconds: int = _DEFAULT_COOLDOWN_SECONDS) -> None:
         self.cooldown_seconds = cooldown_seconds
-        self._last_fired: Dict[Tuple[str, str], datetime] = {}
+        self._last_fired: dict[tuple[str, str], datetime] = {}
         self._lock = asyncio.Lock()
-        self._client: Optional[httpx.AsyncClient] = None
+        self._client: httpx.AsyncClient | None = None
 
     async def start(self) -> None:
         self._client = httpx.AsyncClient(timeout=10.0)
@@ -60,7 +58,7 @@ class WebhookAlerter:
         key = (prediction.service_name, prediction.metric_name)
         async with self._lock:
             last = self._last_fired.get(key)
-            now = datetime.now(tz=timezone.utc)
+            now = datetime.now(tz=UTC)
             if last is not None:
                 elapsed = (now - last).total_seconds()
                 if elapsed < self.cooldown_seconds:
@@ -175,7 +173,7 @@ class WebhookAlerter:
 
         async with self._lock:
             last = self._last_fired.get(key)
-            now = datetime.now(tz=timezone.utc)
+            now = datetime.now(tz=UTC)
             if last is not None and (now - last).total_seconds() < self.cooldown_seconds:
                 return
             self._last_fired[key] = now

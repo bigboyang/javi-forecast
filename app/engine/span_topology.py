@@ -25,10 +25,8 @@ from __future__ import annotations
 
 import threading
 import time
-from collections import defaultdict
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from typing import Dict, List, Optional, Tuple
+from datetime import UTC, datetime
 
 from ..models.span import SpanEvent
 
@@ -49,7 +47,7 @@ class TopologyEdge:
     call_count: int = 0
     error_count: int = 0
     last_seen: datetime = field(
-        default_factory=lambda: datetime.now(tz=timezone.utc)
+        default_factory=lambda: datetime.now(tz=UTC)
     )
 
 
@@ -77,9 +75,9 @@ class SpanTopologyTracker:
         self._max_index_size = max_index_size
 
         # span_id → (service_name, expire_monotonic)
-        self._span_index: Dict[str, Tuple[str, float]] = {}
+        self._span_index: dict[str, tuple[str, float]] = {}
         # (caller, callee) → TopologyEdge
-        self._edges: Dict[Tuple[str, str], TopologyEdge] = {}
+        self._edges: dict[tuple[str, str], TopologyEdge] = {}
         self._lock = threading.Lock()
 
     # ------------------------------------------------------------------
@@ -120,15 +118,15 @@ class SpanTopologyTracker:
                         edge.call_count += 1
                         if span.is_error:
                             edge.error_count += 1
-                        edge.last_seen = datetime.now(tz=timezone.utc)
+                        edge.last_seen = datetime.now(tz=UTC)
 
     # ------------------------------------------------------------------
     # Read API
     # ------------------------------------------------------------------
 
-    def get_topology(self) -> List[TopologyEdge]:
+    def get_topology(self) -> list[TopologyEdge]:
         """Return a snapshot of all live topology edges."""
-        now = datetime.now(tz=timezone.utc)
+        now = datetime.now(tz=UTC)
         cutoff_seconds = self._edge_ttl
         with self._lock:
             # GC stale edges
@@ -141,12 +139,12 @@ class SpanTopologyTracker:
                 del self._edges[key]
             return list(self._edges.values())
 
-    def get_callers(self, service: str) -> List[TopologyEdge]:
+    def get_callers(self, service: str) -> list[TopologyEdge]:
         """Return edges where *service* is the callee (downstream)."""
         with self._lock:
             return [e for e in self._edges.values() if e.callee == service]
 
-    def get_callees(self, service: str) -> List[TopologyEdge]:
+    def get_callees(self, service: str) -> list[TopologyEdge]:
         """Return edges where *service* is the caller (upstream)."""
         with self._lock:
             return [e for e in self._edges.values() if e.caller == service]

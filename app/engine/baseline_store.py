@@ -12,7 +12,6 @@ from __future__ import annotations
 import logging
 from collections import defaultdict
 from datetime import datetime
-from typing import Dict, Optional, Tuple
 
 import numpy as np
 
@@ -22,7 +21,7 @@ logger = logging.getLogger(__name__)
 _MIN_BUCKET_OBS = 5
 
 # (service, metric, weekday 0-6, hour 0-23)
-_Key = Tuple[str, str, int, int]
+_Key = tuple[str, str, int, int]
 
 
 class _WelfordStats:
@@ -69,7 +68,7 @@ class BaselineStore:
 
     def __init__(self, min_observations: int = _MIN_BUCKET_OBS) -> None:
         self.min_observations = min_observations
-        self._buckets: Dict[_Key, _WelfordStats] = defaultdict(_WelfordStats)
+        self._buckets: dict[_Key, _WelfordStats] = defaultdict(_WelfordStats)
 
     def update(
         self,
@@ -88,7 +87,7 @@ class BaselineStore:
         metric: str,
         weekday: int,
         hour: int,
-    ) -> Optional[Tuple[float, float]]:
+    ) -> tuple[float, float] | None:
         """Return ``(mean, std)`` for the given slot, or ``None`` if insufficient data.
 
         Parameters

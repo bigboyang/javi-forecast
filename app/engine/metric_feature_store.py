@@ -15,8 +15,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections import defaultdict, deque
-from datetime import datetime, timezone
-from typing import Deque, Dict, List, Optional, Tuple
+from datetime import UTC, datetime
 
 from ..models.metric import MetricEvent, MetricPoint
 
@@ -37,10 +36,10 @@ class MetricFeatureStore:
     def __init__(self, maxlen: int = _DEFAULT_MAXLEN) -> None:
         self.maxlen = maxlen
         # (service_name, metric_name) → deque[(datetime, float)]
-        self._series: Dict[Tuple[str, str], Deque[Tuple[datetime, float]]] = defaultdict(
+        self._series: dict[tuple[str, str], deque[tuple[datetime, float]]] = defaultdict(
             lambda: deque(maxlen=self.maxlen)
         )
-        self._locks: Dict[Tuple[str, str], asyncio.Lock] = defaultdict(asyncio.Lock)
+        self._locks: dict[tuple[str, str], asyncio.Lock] = defaultdict(asyncio.Lock)
 
     # ------------------------------------------------------------------
     # Write API
@@ -49,7 +48,7 @@ class MetricFeatureStore:
     async def update(self, event: MetricEvent) -> None:
         """Append a single MetricEvent to the appropriate time series."""
         key = (event.service_name, event.metric_name)
-        ts = datetime.fromtimestamp(event.timestamp_ms / 1_000, tz=timezone.utc)
+        ts = datetime.fromtimestamp(event.timestamp_ms / 1_000, tz=UTC)
         async with self._locks[key]:
             self._series[key].append((ts, event.value))
 
@@ -69,8 +68,8 @@ class MetricFeatureStore:
         self,
         service_name: str,
         metric_name: str,
-        window_minutes: Optional[int] = None,
-    ) -> List[MetricPoint]:
+        window_minutes: int | None = None,
+    ) -> list[MetricPoint]:
         """Return time-series points for the given (service, metric) pair.
 
         Parameters
@@ -83,12 +82,12 @@ class MetricFeatureStore:
 
         if window_minutes is not None:
             from datetime import timedelta
-            cutoff = datetime.now(tz=timezone.utc) - timedelta(minutes=window_minutes)
+            cutoff = datetime.now(tz=UTC) - timedelta(minutes=window_minutes)
             entries = [(ts, v) for ts, v in entries if ts >= cutoff]
 
         return [MetricPoint(timestamp=ts, value=v) for ts, v in entries]
 
-    def get_metric_names(self, service_name: str) -> List[str]:
+    def get_metric_names(self, service_name: str) -> list[str]:
         """Return all metric names that have data for *service_name*."""
         return [
             metric_name
@@ -96,7 +95,7 @@ class MetricFeatureStore:
             if svc == service_name and len(q) > 0
         ]
 
-    def get_services(self) -> List[str]:
+    def get_services(self) -> list[str]:
         """Return all service names that have at least one data point."""
         return list({svc for (svc, _), q in self._series.items() if len(q) > 0})
 

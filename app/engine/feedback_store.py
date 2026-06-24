@@ -13,10 +13,9 @@ from __future__ import annotations
 
 import threading
 import time
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from typing import Dict, List, Optional
 import uuid
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
 
 
 @dataclass
@@ -26,7 +25,7 @@ class FeedbackEntry:
     metric_name: str
     severity: str
     is_false_positive: bool
-    note: Optional[str]
+    note: str | None
     created_at: datetime
     _expire_mono: float = field(repr=False, compare=False, default=0.0)
 
@@ -42,7 +41,7 @@ class FeedbackStore:
 
     def __init__(self, ttl_seconds: int = 7 * 86400) -> None:
         self._ttl = ttl_seconds
-        self._entries: Dict[str, FeedbackEntry] = {}
+        self._entries: dict[str, FeedbackEntry] = {}
         self._lock = threading.Lock()
 
     # ------------------------------------------------------------------
@@ -55,7 +54,7 @@ class FeedbackStore:
         metric_name: str,
         severity: str,
         is_false_positive: bool,
-        note: Optional[str] = None,
+        note: str | None = None,
     ) -> FeedbackEntry:
         """Record operator feedback and return the stored entry."""
         entry = FeedbackEntry(
@@ -65,7 +64,7 @@ class FeedbackStore:
             severity=severity,
             is_false_positive=is_false_positive,
             note=note,
-            created_at=datetime.now(tz=timezone.utc),
+            created_at=datetime.now(tz=UTC),
             _expire_mono=time.monotonic() + self._ttl,
         )
         with self._lock:
@@ -78,9 +77,9 @@ class FeedbackStore:
 
     def get_all(
         self,
-        service_name: Optional[str] = None,
-        metric_name: Optional[str] = None,
-    ) -> List[FeedbackEntry]:
+        service_name: str | None = None,
+        metric_name: str | None = None,
+    ) -> list[FeedbackEntry]:
         """Return non-expired entries, optionally filtered."""
         now = time.monotonic()
         with self._lock:
@@ -97,11 +96,11 @@ class FeedbackStore:
             entries = [e for e in entries if e.metric_name == metric_name]
         return sorted(entries, key=lambda e: e.created_at, reverse=True)
 
-    def stats(self) -> Dict[str, int]:
+    def stats(self) -> dict[str, int]:
         """Return aggregate false-positive / false-negative counts per service."""
         now = time.monotonic()
-        fp: Dict[str, int] = {}
-        fn: Dict[str, int] = {}
+        fp: dict[str, int] = {}
+        fn: dict[str, int] = {}
         with self._lock:
             for e in self._entries.values():
                 if e._expire_mono < now:

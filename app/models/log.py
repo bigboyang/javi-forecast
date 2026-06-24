@@ -1,5 +1,6 @@
+from typing import Any
+
 from pydantic import BaseModel
-from typing import Any, Dict, List, Optional
 
 
 class LogEvent(BaseModel):
@@ -11,17 +12,17 @@ class LogEvent(BaseModel):
     severity values: TRACE | DEBUG | INFO | WARN | ERROR | FATAL
     """
 
-    schema_version: Optional[str] = None
+    schema_version: str | None = None
     service_name: str
     severity: str                               # log level
     body: str                                   # log message text
     timestamp_ms: int                           # epoch milliseconds
-    trace_id: Optional[str] = None
-    span_id: Optional[str] = None
-    attributes: Optional[Dict[str, Any]] = {}
+    trace_id: str | None = None
+    span_id: str | None = None
+    attributes: dict[str, Any] | None = {}
 
 
 class LogEventBatch(BaseModel):
     """Batch wrapper used by the HTTP ingest endpoint."""
 
-    logs: List[LogEvent]
+    logs: list[LogEvent]

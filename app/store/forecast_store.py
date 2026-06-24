@@ -11,7 +11,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from typing import Dict, List, Optional, Tuple
 
 from ..models.forecast import ForecastResult
 
@@ -32,7 +31,7 @@ class ForecastStore:
     def __init__(self, ttl_seconds: int = _DEFAULT_TTL) -> None:
         self.ttl_seconds = ttl_seconds
         # key → (stored_at_monotonic, ForecastResult)
-        self._data: Dict[str, Tuple[float, ForecastResult]] = {}
+        self._data: dict[str, tuple[float, ForecastResult]] = {}
         self._lock = asyncio.Lock()
 
     # ------------------------------------------------------------------
@@ -60,7 +59,7 @@ class ForecastStore:
 
     async def get(
         self, service_name: str, metric_name: str
-    ) -> Optional[ForecastResult]:
+    ) -> ForecastResult | None:
         """Return the cached result or *None* if absent / expired."""
         key = _make_key(service_name, metric_name)
         async with self._lock:
@@ -75,7 +74,7 @@ class ForecastStore:
             return None
         return result
 
-    async def list_all(self) -> List[ForecastResult]:
+    async def list_all(self) -> list[ForecastResult]:
         """Return all non-expired forecast results."""
         now = time.monotonic()
         async with self._lock:
@@ -86,7 +85,7 @@ class ForecastStore:
             ]
         return valid
 
-    async def list_services(self) -> List[str]:
+    async def list_services(self) -> list[str]:
         """Return distinct service names that have at least one valid result."""
         results = await self.list_all()
         return list({r.service_name for r in results})

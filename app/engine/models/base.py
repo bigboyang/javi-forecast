@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Tuple
+
 import numpy as np
 
 
@@ -28,7 +28,7 @@ class BaseForecaster(ABC):
     @abstractmethod
     def predict(
         self, steps: int
-    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         """Generate *steps* future predictions.
 
         Returns

@@ -5,7 +5,6 @@ p ∈ {0,1,2,3}, d ∈ {0,1}, q ∈ {0,1,2,3}.
 The best model found during fit() is cached and reused for predict().
 """
 
-from typing import Optional, Tuple
 
 import numpy as np
 
@@ -36,7 +35,7 @@ class ARIMAForecaster(BaseForecaster):
         self.confidence_alpha = confidence_alpha
 
         self._result = None          # fitted ARIMAResults
-        self._best_order: Optional[Tuple[int, int, int]] = None
+        self._best_order: tuple[int, int, int] | None = None
         self._fitted: bool = False
 
     # ------------------------------------------------------------------
@@ -53,7 +52,7 @@ class ARIMAForecaster(BaseForecaster):
 
         best_aic = float("inf")
         best_result = None
-        best_order: Tuple[int, int, int] = (1, 0, 0)
+        best_order: tuple[int, int, int] = (1, 0, 0)
 
         for p in range(self.max_p + 1):
             for d in range(self.max_d + 1):
@@ -83,7 +82,7 @@ class ARIMAForecaster(BaseForecaster):
 
     def predict(
         self, steps: int
-    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         if not self._fitted or self._result is None:
             raise RuntimeError("Model has not been fitted yet")
         if steps < 1:
@@ -97,5 +96,5 @@ class ARIMAForecaster(BaseForecaster):
         return predicted, lower, upper
 
     @property
-    def best_order(self) -> Optional[Tuple[int, int, int]]:
+    def best_order(self) -> tuple[int, int, int] | None:
         return self._best_order

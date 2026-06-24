@@ -12,7 +12,6 @@ Algorithm
 * Confidence interval: ±z * σ_residual * sqrt(h)
 """
 
-from typing import Tuple
 
 import numpy as np
 
@@ -82,7 +81,7 @@ class EWMAForecaster(BaseForecaster):
 
     def predict(
         self, steps: int
-    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         if not self._fitted:
             raise RuntimeError("Model has not been fitted yet")
         if steps < 1:

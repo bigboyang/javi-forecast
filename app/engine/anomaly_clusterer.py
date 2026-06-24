@@ -16,17 +16,16 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from dataclasses import dataclass, field
-from datetime import datetime, timezone, timedelta
-from typing import Dict, List, Optional
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 
 
 @dataclass
 class IncidentCluster:
     incident_id: str
     service_name: str
-    anomaly_ids: List[str]
-    anomaly_types: List[str]
+    anomaly_ids: list[str]
+    anomaly_types: list[str]
     severity: str          # escalates to "critical" if any member is critical
     started_at: datetime
     last_seen_at: datetime
@@ -52,7 +51,7 @@ class AnomalyClusterer:
     ) -> None:
         self._window = timedelta(seconds=window_seconds)
         self._ttl = timedelta(hours=resolved_ttl_hours)
-        self._incidents: Dict[str, IncidentCluster] = {}
+        self._incidents: dict[str, IncidentCluster] = {}
         self._lock = asyncio.Lock()
 
     async def ingest(self, anomaly: dict) -> str:
@@ -61,12 +60,12 @@ class AnomalyClusterer:
         atype = anomaly.get("anomaly_type", "")
         anom_id = anomaly.get("id", uuid.uuid4().hex)
         severity = anomaly.get("severity", "warning")
-        ts: datetime = anomaly.get("minute") or datetime.now(tz=timezone.utc)
+        ts: datetime = anomaly.get("minute") or datetime.now(tz=UTC)
         if ts.tzinfo is None:
-            ts = ts.replace(tzinfo=timezone.utc)
+            ts = ts.replace(tzinfo=UTC)
 
         async with self._lock:
-            open_inc: Optional[IncidentCluster] = None
+            open_inc: IncidentCluster | None = None
             for inc in self._incidents.values():
                 if (
                     inc.open
@@ -97,26 +96,26 @@ class AnomalyClusterer:
             )
             return inc_id
 
-    async def close_incident(self, incident_id: str) -> Optional[IncidentCluster]:
+    async def close_incident(self, incident_id: str) -> IncidentCluster | None:
         async with self._lock:
             inc = self._incidents.get(incident_id)
             if inc:
                 inc.open = False
             return inc
 
-    async def list_incidents(self, open_only: bool = True) -> List[IncidentCluster]:
+    async def list_incidents(self, open_only: bool = True) -> list[IncidentCluster]:
         async with self._lock:
             self._purge_old()
             if open_only:
                 return [i for i in self._incidents.values() if i.open]
             return list(self._incidents.values())
 
-    async def get_incident(self, incident_id: str) -> Optional[IncidentCluster]:
+    async def get_incident(self, incident_id: str) -> IncidentCluster | None:
         async with self._lock:
             return self._incidents.get(incident_id)
 
     def _purge_old(self) -> None:
-        now = datetime.now(tz=timezone.utc)
+        now = datetime.now(tz=UTC)
         expired = [
             k for k, v in self._incidents.items()
             if not v.open and (now - v.last_seen_at) > self._ttl
