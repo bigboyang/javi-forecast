@@ -18,6 +18,7 @@ import uuid
 from datetime import datetime, timezone, timedelta
 
 from ..config import settings
+from .prom_metrics import rca_reports_generated
 
 
 def _to_json(obj) -> str:
@@ -40,8 +41,16 @@ class RCAEngine:
         Connected ClickHouseStore instance.
     """
 
-    def __init__(self, clickhouse) -> None:
+    def __init__(self, clickhouse, incident_store=None) -> None:
         self._ch = clickhouse
+        self._incident_rag = None
+        if incident_store is not None and settings.RAG_ENABLED and settings.INCIDENT_RAG_ENABLED:
+            try:
+                from ..rag.incident_rag import IncidentRAG
+                self._incident_rag = IncidentRAG(incident_store)
+                logger.info("RCAEngine: IncidentRAG enabled")
+            except Exception as exc:
+                logger.warning("RCAEngine: IncidentRAG unavailable – %s", exc)
         self._task = None
 
     async def start(self) -> None:
@@ -91,6 +100,7 @@ class RCAEngine:
 
         try:
             await self._ch.insert_rca_reports(reports)
+            rca_reports_generated.inc(len(reports))
             logger.info("rca: reports generated count=%d", len(reports))
         except Exception as exc:
             logger.error("rca: insert failed: %s", exc)
@@ -112,6 +122,7 @@ class RCAEngine:
         deployments = deployments if isinstance(deployments, list) else []
 
         hypothesis = _build_hypothesis(a, spans, neighbors, deployments)
+        llm_analysis = await self._run_llm_analysis(a)
 
         return {
             "id": uuid.uuid4().hex,
@@ -126,9 +137,26 @@ class RCAEngine:
             "similar_incidents": "[]",
             "nearby_deployments": _to_json(deployments),
             "hypothesis": hypothesis,
-            "llm_analysis": "",
+            "llm_analysis": llm_analysis,
             "created_at": datetime.now(tz=timezone.utc),
         }
+
+    async def _run_llm_analysis(self, a: dict) -> str:
+        if self._incident_rag is None:
+            return ""
+        try:
+            result = await self._incident_rag.analyze(
+                service_name=a["service_name"],
+                metric_name=a["anomaly_type"],
+                severity=a["severity"],
+                predicted_value=float(a["current_value"]),
+                expected_value=float(a["baseline_value"]),
+                z_score=float(a["z_score"]),
+            )
+            return _to_json(result)
+        except Exception as exc:
+            logger.warning("rca: llm analysis failed svc=%s: %s", a["service_name"], exc)
+            return ""
 
     async def _fetch_correlated_spans(self, svc: str, minute: datetime) -> list:
         try:

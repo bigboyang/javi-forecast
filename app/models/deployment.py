@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 
 
 class DeploymentEvent(BaseModel):
+    schema_version: Optional[str] = None
     service_name: str
     version: str
     environment: str = ""

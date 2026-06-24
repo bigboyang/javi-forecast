@@ -3,6 +3,7 @@ from typing import Dict, Any, Optional, List
 
 
 class SpanEvent(BaseModel):
+    schema_version: Optional[str] = None
     trace_id: str
     span_id: str
     parent_span_id: Optional[str] = None

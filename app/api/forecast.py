@@ -254,3 +254,31 @@ async def trigger_forecast(
             detail="Forecast was run but result not found in store",
         )
     return result.model_dump()
+
+
+@router.get(
+    "/accuracy",
+    summary="Forecast accuracy (MAE/RMSE) for all tracked (service, metric) pairs",
+)
+async def get_all_accuracy(request: Request):
+    tracker = getattr(request.app.state, "accuracy_tracker", None)
+    if tracker is None:
+        return []
+    pairs = await tracker.list_services()
+    results = []
+    for svc, metric in pairs:
+        acc = await tracker.get_accuracy(svc, metric)
+        results.append({"service_name": svc, "metric_name": metric, **acc})
+    return results
+
+
+@router.get(
+    "/accuracy/{service_name}/{metric_name}",
+    summary="Forecast accuracy (MAE/RMSE) for a specific service+metric",
+)
+async def get_accuracy(service_name: str, metric_name: str, request: Request):
+    tracker = getattr(request.app.state, "accuracy_tracker", None)
+    if tracker is None:
+        raise HTTPException(status_code=503, detail="Accuracy tracker not initialised")
+    acc = await tracker.get_accuracy(service_name, metric_name)
+    return {"service_name": service_name, "metric_name": metric_name, **acc}

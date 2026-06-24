@@ -11,6 +11,7 @@ class LogEvent(BaseModel):
     severity values: TRACE | DEBUG | INFO | WARN | ERROR | FATAL
     """
 
+    schema_version: Optional[str] = None
     service_name: str
     severity: str                               # log level
     body: str                                   # log message text

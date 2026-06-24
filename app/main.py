@@ -52,6 +52,9 @@ from .engine.jvm_feature_store import JvmFeatureStore
 from .engine.metric_feature_store import MetricFeatureStore
 from .engine.span_topology import SpanTopologyTracker
 from .engine.var_forecaster import VarForecaster
+from .engine.accuracy_tracker import AccuracyTracker
+from .engine.alert_store import AlertStore
+from .engine.anomaly_clusterer import AnomalyClusterer
 from .engine.baseline_computer import BaselineComputer
 from .engine.anomaly_detector import AnomalyDetector
 from .engine.rca_engine import RCAEngine
@@ -86,20 +89,43 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Manage startup and shutdown of background services."""
     logger.info("javi-forecast starting up … instance_id=%s", settings.INSTANCE_ID)
 
-    # ---- Multi-instance safety check ------------------------------------
-    if settings.REDIS_URL is None:
+    # ---- Redis (optional, for HA feature-store sharing) -----------------
+    redis_client = None
+    if settings.REDIS_URL:
+        try:
+            import redis.asyncio as aioredis
+            redis_client = aioredis.from_url(
+                settings.REDIS_URL,
+                encoding="utf-8",
+                decode_responses=False,
+                socket_connect_timeout=5,
+            )
+            await redis_client.ping()
+            logger.info("Redis connected: %s", settings.REDIS_URL)
+        except Exception as exc:
+            logger.warning("Redis connection failed: %s – FeatureStore will be in-memory only", exc)
+            redis_client = None
+    else:
         logger.warning(
             "REDIS_URL is not set – FeatureStore is in-memory only. "
             "Running multiple replicas will result in split-brain forecasts. "
             "Set REDIS_URL and INSTANCE_ID for HA deployments."
         )
+
     # ---- Build shared components ----------------------------------------
-    feature_store = FeatureStore(maxlen=4320, max_services=settings.MAX_FEATURE_STORE_SERVICES)  # 72 h at 1-min cadence
+    feature_store = FeatureStore(
+        maxlen=4320,
+        max_services=settings.MAX_FEATURE_STORE_SERVICES,
+        redis_client=redis_client,
+    )  # 72 h at 1-min cadence
     jvm_feature_store = JvmFeatureStore(maxlen=4320)       # 72 h at 1-min cadence
     metric_feature_store = MetricFeatureStore(maxlen=4320) # 72 h at 1-min cadence
     forecast_store = ForecastStore(ttl_seconds=3600)
     span_topology = SpanTopologyTracker()
     feedback_store = AlertFeedbackStore(ttl_seconds=7 * 86400)
+    alert_store = AlertStore(ttl_hours=24)  # clickhouse wired up below after CH connect
+    anomaly_clusterer = AnomalyClusterer(window_seconds=300)
+    accuracy_tracker = AccuracyTracker(maxlen=500)
     service_registry = ServiceRegistry()
     deployment_store = DeploymentStore()
     deploy_event_handler = DeployEventHandler(deployment_store)
@@ -160,6 +186,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         alerter=alerter,
         metric_feature_store=metric_feature_store,
         incident_store=incident_store,
+        accuracy_tracker=accuracy_tracker,
     )
 
     # Expose shared state via app.state for dependency injection
@@ -180,6 +207,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.span_topology = span_topology
     app.state.feedback_store = feedback_store
     app.state.service_registry = service_registry
+    app.state.alert_store = alert_store
+    app.state.anomaly_clusterer = anomaly_clusterer
+    app.state.accuracy_tracker = accuracy_tracker
 
     # ---- ClickHouse ---------------------------------------------------------
     clickhouse: ClickHouseStore | None = None
@@ -200,6 +230,24 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         logger.info("ClickHouse disabled (DISABLE_CLICKHOUSE=true)")
 
     app.state.clickhouse = clickhouse
+
+    # ---- Wire AlertStore ClickHouse + ensure table --------------------------
+    if clickhouse is not None:
+        alert_store._ch = clickhouse
+        try:
+            await clickhouse.ensure_alerts_table()
+            n_alerts = await alert_store.load_from_clickhouse()
+            logger.info("AlertStore: preloaded %d active alerts from ClickHouse", n_alerts)
+        except Exception as exc:
+            logger.warning("AlertStore: ClickHouse init failed: %s", exc)
+
+    # ---- Redis preload (before backfill so ts_index deduplicates correctly) ----
+    if redis_client is not None:
+        try:
+            loaded = await feature_store.load_from_redis()
+            logger.info("Redis preload complete: %d points loaded", loaded)
+        except Exception as exc:
+            logger.warning("Redis preload failed: %s – starting from empty store", exc)
 
     # ---- Backfill -----------------------------------------------------------
     if clickhouse is not None and settings.BACKFILL_ENABLED:
@@ -243,13 +291,18 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # ---- Anomaly Detector (ported from collector) ---------------------------
     anomaly_detector: AnomalyDetector | None = None
     if clickhouse is not None and settings.ANOMALY_ENABLED:
-        anomaly_detector = AnomalyDetector(clickhouse=clickhouse, alerter=alerter)
+        anomaly_detector = AnomalyDetector(
+            clickhouse=clickhouse,
+            alerter=alerter,
+            alert_store=alert_store,
+            anomaly_clusterer=anomaly_clusterer,
+        )
         await anomaly_detector.start()
 
     # ---- RCA Engine (ported from collector) ---------------------------------
     rca_engine: RCAEngine | None = None
     if clickhouse is not None and settings.RCA_ENABLED:
-        rca_engine = RCAEngine(clickhouse=clickhouse)
+        rca_engine = RCAEngine(clickhouse=clickhouse, incident_store=incident_store)
         await rca_engine.start()
 
     # ---- JVM Analyzer -------------------------------------------------------
@@ -274,7 +327,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await forecaster.start()
 
     # ---- Mark ready ---------------------------------------------------------
-    set_dependencies(clickhouse, feature_store, ready=True)
+    set_dependencies(
+        clickhouse,
+        feature_store,
+        ready=True,
+        kafka_service=kafka,
+        forecaster=forecaster,
+        anomaly_detector=anomaly_detector,
+    )
     mark_ready(True)
     logger.info("javi-forecast ready on port %d", settings.HTTP_PORT)
 
@@ -308,6 +368,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     if clickhouse is not None:
         await clickhouse.close()
 
+    if redis_client is not None:
+        await redis_client.aclose()
+
     logger.info("javi-forecast shutdown complete")
 
 
@@ -328,9 +391,10 @@ app = FastAPI(
     redoc_url="/redoc",
 )
 
+_cors_origins = [o.strip() for o in settings.CORS_ALLOWED_ORIGINS.split(",") if o.strip()]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_cors_origins,
     allow_methods=["*"],
     allow_headers=["*"],
 )

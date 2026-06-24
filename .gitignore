@@ -1,3 +1,11 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.venv/
+venv/
+
 .claude/
 .idea/
 .vscode/
@@ -14,7 +22,5 @@
 /cache/
 /backup/
 /archive/
-/backup/
-/backup/
 .fake
 /javi/logs/*

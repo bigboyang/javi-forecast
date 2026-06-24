@@ -55,7 +55,7 @@ class ClickHouseStore:
         """Open the async ClickHouse connection."""
         import clickhouse_connect
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         self._client = await loop.run_in_executor(
             None,
             lambda: clickhouse_connect.get_client(
@@ -87,7 +87,7 @@ class ClickHouseStore:
         """Return True when ClickHouse is reachable."""
         if self._client is None:
             return False
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         try:
             await loop.run_in_executor(None, self._client.ping)
             return True
@@ -103,7 +103,7 @@ class ClickHouseStore:
         """Execute *sql* and return a clickhouse_connect QueryResult."""
         if self._client is None:
             raise RuntimeError("ClickHouseStore not connected – call connect() first")
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         return await loop.run_in_executor(
             None,
             lambda: self._client.query(sql, parameters=params or {}),
@@ -289,7 +289,7 @@ class ClickHouseStore:
         """Execute a write *sql* statement (INSERT / CREATE …)."""
         if self._client is None:
             raise RuntimeError("ClickHouseStore not connected")
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         if data is not None:
             await loop.run_in_executor(None, lambda: self._client.insert(sql, data))
         else:
@@ -308,7 +308,7 @@ class ClickHouseStore:
         """Batch-insert anomaly records."""
         if not rows:
             return
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         sql = f"INSERT INTO {self._database}.anomalies"
         await loop.run_in_executor(None, lambda: self._client.insert(sql, rows))
 
@@ -316,7 +316,7 @@ class ClickHouseStore:
         """Batch-insert RCA report records."""
         if not rows:
             return
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         sql = f"INSERT INTO {self._database}.rca_reports"
         await loop.run_in_executor(None, lambda: self._client.insert(sql, rows))
 
@@ -352,7 +352,7 @@ WHERE kind IN (2, 5)
 GROUP BY service_name, span_name, http_route, day_of_week, hour_of_day
 HAVING sample_count >= 10
 """
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         await loop.run_in_executor(None, lambda: self._client.command(sql))
 
     async def query_current_red(self) -> list[dict]:
@@ -515,6 +515,70 @@ LIMIT 5
                 "id": r[0], "service_name": r[1], "version": r[2],
                 "environment": r[3], "deployed_by": r[4],
                 "description": r[5], "deployed_at": _ensure_utc(r[6]),
+            })
+        return rows
+
+
+    # ------------------------------------------------------------------
+    # Alert lifecycle persistence
+    # ------------------------------------------------------------------
+
+    async def ensure_alerts_table(self) -> None:
+        """Create apm.alerts if it does not already exist."""
+        sql = f"""
+CREATE TABLE IF NOT EXISTS {self._database}.alerts (
+    id           String,
+    service_name LowCardinality(String),
+    span_name    String,
+    anomaly_type LowCardinality(String),
+    severity     LowCardinality(String),
+    current_value Float64,
+    baseline_value Float64,
+    z_score      Float64,
+    state        LowCardinality(String),
+    fired_at     DateTime64(3, 'UTC'),
+    acked_at     Nullable(DateTime64(3, 'UTC')),
+    resolved_at  Nullable(DateTime64(3, 'UTC')),
+    ack_by       Nullable(String)
+) ENGINE = ReplacingMergeTree(fired_at)
+ORDER BY (service_name, anomaly_type, id)
+PARTITION BY toYYYYMM(fired_at)
+TTL fired_at + INTERVAL 30 DAY
+"""
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, lambda: self._client.command(sql))
+
+    async def upsert_alert(self, record: dict) -> None:
+        """Insert or update an alert record in apm.alerts (upsert via ReplacingMergeTree)."""
+        if self._client is None:
+            raise RuntimeError("ClickHouseStore not connected")
+        loop = asyncio.get_running_loop()
+        sql = f"INSERT INTO {self._database}.alerts"
+        await loop.run_in_executor(None, lambda: self._client.insert(sql, [record]))
+
+    async def query_active_alerts(self, ttl_hours: int = 24) -> list[dict]:
+        """Return FIRING/ACKNOWLEDGED alerts from ClickHouse for cross-pod dedup."""
+        sql = f"""
+SELECT id, service_name, span_name, anomaly_type, severity,
+       current_value, baseline_value, z_score, state,
+       fired_at, acked_at, resolved_at, ack_by
+FROM {self._database}.alerts FINAL
+WHERE state IN ('FIRING', 'ACKNOWLEDGED')
+  AND fired_at >= now() - INTERVAL {ttl_hours} HOUR
+ORDER BY fired_at DESC
+"""
+        result = await self._query(sql)
+        rows = []
+        for r in result.result_rows:
+            rows.append({
+                "id": r[0], "service_name": r[1], "span_name": r[2],
+                "anomaly_type": r[3], "severity": r[4],
+                "current_value": float(r[5]), "baseline_value": float(r[6]),
+                "z_score": float(r[7]), "state": r[8],
+                "fired_at": _ensure_utc(r[9]),
+                "acked_at": _ensure_utc(r[10]) if r[10] else None,
+                "resolved_at": _ensure_utc(r[11]) if r[11] else None,
+                "ack_by": r[12],
             })
         return rows
 

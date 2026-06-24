@@ -4,6 +4,17 @@ Each service gets a deque of (timestamp, REDMetric) pairs capped at
 ``maxlen`` entries.  All mutations are protected by a per-service
 asyncio.Lock so concurrent updates from the Kafka consumer and the
 forecast loop are safe.
+
+When a Redis client is provided (via ``redis_client``), each completed
+1-minute bucket is also written to Redis as a sorted set (score = Unix
+timestamp).  On startup, ``load_from_redis()`` repopulates the local
+deque from Redis — this survives pod restarts and enables multi-replica
+consistency.
+
+Redis key layout
+----------------
+``fs:services``              -> Redis Set of all known service names
+``fs:series:{service}``      -> Redis Sorted Set (score=unix_ts, member=JSON REDMetric)
 """
 
 import asyncio
@@ -11,7 +22,7 @@ import logging
 import time
 from collections import defaultdict, deque
 from datetime import datetime, timezone
-from typing import Dict, Deque, List, Optional, Tuple
+from typing import Any, Dict, Deque, List, Optional, Tuple
 
 from ..models.metric import REDMetric, MetricPoint
 from ..models.span import SpanEvent
@@ -22,6 +33,9 @@ logger = logging.getLogger(__name__)
 _DEFAULT_MAXLEN = 4320
 # Default maximum distinct services tracked before LRU eviction.
 _DEFAULT_MAX_SERVICES = 1000
+
+_REDIS_SERVICES_KEY = "fs:services"
+_REDIS_SERIES_PREFIX = "fs:series:"
 
 # Internal per-service accumulator bucket (1-minute resolution).
 _METRIC_NAMES = ("rate", "error_rate", "p50_ms", "p95_ms", "p99_ms")
@@ -71,6 +85,10 @@ def _truncate_to_minute(ts: datetime) -> datetime:
 class FeatureStore:
     """Thread-safe in-memory feature store keyed by service name.
 
+    When ``redis_client`` is provided, completed 1-minute buckets are
+    written through to Redis (best-effort) and ``load_from_redis()``
+    can repopulate state after a pod restart.
+
     Attributes
     ----------
     maxlen : int
@@ -81,9 +99,11 @@ class FeatureStore:
         self,
         maxlen: int = _DEFAULT_MAXLEN,
         max_services: int = _DEFAULT_MAX_SERVICES,
+        redis_client: Optional[Any] = None,
     ) -> None:
         self.maxlen = maxlen
         self._max_services = max_services
+        self._redis = redis_client
 
         # service → deque[(minute_ts, REDMetric)]
         self._series: Dict[str, Deque[Tuple[datetime, REDMetric]]] = defaultdict(
@@ -136,6 +156,7 @@ class FeatureStore:
                 return  # deduplicate
             self._ts_index[service].add(minute_ts)
             self._series[service].append((minute_ts, metric))
+        await self._redis_persist(service, minute_ts, metric)
 
     async def flush_open_buckets(self) -> None:
         """Close and flush all open accumulation buckets."""
@@ -242,3 +263,83 @@ class FeatureStore:
             bucket.minute_ts,
             bucket.count,
         )
+        # Schedule Redis persist (fire-and-forget; errors are logged, not raised).
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(self._redis_persist(service, bucket.minute_ts, red))
+        except RuntimeError:
+            pass  # no running loop during shutdown flush
+
+    # ------------------------------------------------------------------
+    # Redis write-through helpers
+    # ------------------------------------------------------------------
+
+    async def _redis_persist(
+        self, service: str, minute_ts: datetime, metric: REDMetric
+    ) -> None:
+        """Write a single REDMetric to Redis (best-effort)."""
+        if self._redis is None:
+            return
+        key = f"{_REDIS_SERIES_PREFIX}{service}"
+        score = minute_ts.timestamp()
+        value = metric.model_dump_json()
+        try:
+            pipe = self._redis.pipeline()
+            pipe.zadd(key, {value: score})
+            pipe.sadd(_REDIS_SERVICES_KEY, service)
+            # Keep only the newest `maxlen` entries (trim oldest).
+            pipe.zremrangebyrank(key, 0, -(self.maxlen + 1))
+            await pipe.execute()
+        except Exception as exc:
+            logger.warning("Redis persist failed service=%s: %s", service, exc)
+
+    async def load_from_redis(self) -> int:
+        """Populate in-memory store from Redis on startup.
+
+        Returns the total number of data points loaded across all services.
+        Should be called once after the Redis connection is established and
+        before the Kafka consumer / backfill starts, so that the dedup
+        ``_ts_index`` is already populated when new data arrives.
+        """
+        if self._redis is None:
+            return 0
+
+        loaded = 0
+        try:
+            raw_services = await self._redis.smembers(_REDIS_SERVICES_KEY)
+        except Exception as exc:
+            logger.warning("Redis load_from_redis: smembers failed: %s", exc)
+            return 0
+
+        for raw_svc in raw_services:
+            service = raw_svc.decode() if isinstance(raw_svc, bytes) else raw_svc
+            key = f"{_REDIS_SERIES_PREFIX}{service}"
+            try:
+                entries = await self._redis.zrangebyscore(
+                    key, "-inf", "+inf", withscores=True
+                )
+            except Exception as exc:
+                logger.warning("Redis load_from_redis: zrangebyscore failed svc=%s: %s", service, exc)
+                continue
+
+            self._touch(service)
+            async with self._locks[service]:
+                for raw_value, score in entries:
+                    raw_value = raw_value.decode() if isinstance(raw_value, bytes) else raw_value
+                    try:
+                        metric = REDMetric.model_validate_json(raw_value)
+                    except Exception:
+                        continue
+                    minute_ts = datetime.fromtimestamp(score, tz=timezone.utc)
+                    if minute_ts in self._ts_index[service]:
+                        continue
+                    self._ts_index[service].add(minute_ts)
+                    self._series[service].append((minute_ts, metric))
+                    loaded += 1
+
+        logger.info(
+            "FeatureStore loaded %d data points across %d services from Redis",
+            loaded,
+            len(raw_services),
+        )
+        return loaded

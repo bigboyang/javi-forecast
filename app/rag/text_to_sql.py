@@ -28,6 +28,12 @@ _SQL_FENCE_RE = re.compile(
     r"```(?:sql)?\s*([\s\S]+?)```", re.IGNORECASE
 )
 
+# Only SELECT statements are allowed — block DDL/DML that could mutate data.
+_WRITE_KEYWORDS_RE = re.compile(
+    r"^\s*(INSERT|UPDATE|DELETE|DROP|CREATE|ALTER|TRUNCATE|REPLACE|MERGE|ATTACH|DETACH)\b",
+    re.IGNORECASE,
+)
+
 
 def _extract_sql(text: str) -> str:
     """Pull the first SQL block from the LLM response."""
@@ -36,6 +42,12 @@ def _extract_sql(text: str) -> str:
         return m.group(1).strip()
     # No code fence – treat entire response as SQL
     return text.strip()
+
+
+def _validate_readonly_sql(sql: str) -> None:
+    """Raise ValueError if *sql* contains write/DDL statements."""
+    if _WRITE_KEYWORDS_RE.match(sql):
+        raise ValueError(f"Only SELECT queries are permitted. Got: {sql[:80]!r}")
 
 
 # ---------------------------------------------------------------------------
@@ -72,7 +84,7 @@ class TextToSQLEngine:
         import asyncio
 
         system_prompt = build_system_prompt(self._max_rows)
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
 
         def _call() -> str:
             response = self._client.messages.create(
@@ -112,10 +124,10 @@ class TextToSQLEngine:
             row_count – actual number of rows returned
         """
         sql = await self.generate_sql(question)
+        _validate_readonly_sql(sql)
 
         import asyncio
 
-        loop = asyncio.get_event_loop()
         result = await asyncio.wait_for(
             clickhouse_store._query(sql),
             timeout=settings.RAG_SQL_TIMEOUT_SECONDS,
