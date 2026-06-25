@@ -124,6 +124,26 @@ Docs at `http://localhost:8080/docs`. Key endpoints:
 - `GET /metrics` — Prometheus metrics
 
 
+## Codex Guidance Structure
+
+Use `.codex/` as the repository-managed home for Codex-specific guidance. The main project skill is `.codex/skills/javi-forecast/SKILL.md`; longer context lives in `.codex/skills/javi-forecast/references/` (e.g. `commands.md`, `architecture.md`, `coding-rules.md`, `testing.md`). Read only the relevant reference when deeper context is needed.
+
+## Coding Style & Naming Conventions
+
+Use Python 3.12 syntax, 4-space indentation, and type hints on public functions and non-obvious data structures. Ruff is configured for 100-character lines, import sorting, pyupgrade, bugbear, and standard `E/F/W` checks; run `make fmt` before submitting changes. Module names snake_case, classes PascalCase, functions/variables snake_case, env vars UPPER_SNAKE_CASE. Telemetry JSON contracts use snake_case fields.
+
+## Testing Guidelines
+
+Tests use `pytest` with `pytest-asyncio` in auto mode. Name files `test_*.py` and tests `test_<behavior>`. Prefer focused unit tests for engine/model behavior and route-level tests for API contracts. Run `make test` before commits; use `pytest tests/test_rca_engine.py -v` or `pytest tests/ -k "name"` for targeted runs. Add coverage when touching shared forecasting, anomaly, or RCA logic.
+
+## Commit & Pull Request Guidelines
+
+Use Conventional Commit-style prefixes (`fix:`, `fix(critical):`, `feat:`, `chore:`, `delete:`). Keep commits scoped and imperative, e.g. `fix: handle empty baseline windows`. PRs should include a short problem summary, the implementation approach, test results, related issue links, and screenshots or API examples when behavior changes.
+
+## Security & Configuration Tips
+
+Configuration is managed through `app/config.py` via environment variables and optional `.env` files. Do not commit secrets, API keys, ClickHouse credentials, or local `.env` files. For local development, prefer `make dev` (sets `DISABLE_CLICKHOUSE=true`, `KAFKA_ENABLED=false`, debug logging).
+
 <!-- AUTO-GENERATED:start (스크립트가 관리. 직접 수정 금지) -->
 
 _아래 구간은 스크립트가 자동 생성합니다. 직접 수정하지 마세요._
